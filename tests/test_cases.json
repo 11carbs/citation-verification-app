@@ -1,0 +1,508 @@
+{
+  "version": "2026-11-22d",
+  "spec_source": "汪老師 2026-11-17 meeting：輸入＝欲比對的段落＋ref，限定 IEEE 格式，使用者自己貼上",
+  "ground_truth_scope": "只有解析層（ref 編號、配對數、缺少 ref、未被引用 ref）有正確答案。支持層級不標註——汪老師明確說不要人工標註（2026-11-22 LJH 轉述）。11/17 紀錄的「比較兩者效能」指的是同一批輸入下，方法 A（Jev）與方法 B（一般 LLM）各自輸出的支持分數互相對照，不是跟人工正確答案比對。",
+  "cases": [
+    {
+      "id": "case1-fido2",
+      "source": "汪老師 2026-11-17 meeting 舉例 1",
+      "is_real_ieee": true,
+      "paragraph": "Password-Free Authentication and Secure Backup: To enable secure and password-free authentication, researchers should adopt FIDO2/WebAuthn\nstandards [79].",
+      "references": "[79] \"Device onboarding overview,\" Fido Alliance, 2021. Accessed: Apr. 4, 2025. [Online]. Available: https://fidoalliance.org/device-onboarding-overview/",
+      "expected": {
+        "pair_count": 1,
+        "ref_numbers": [
+          79
+        ],
+        "matched": [
+          79
+        ],
+        "missing_reference": [],
+        "uncited_refs": [],
+        "sentence_count": 1,
+        "claim_must_contain": "Password-Free Authentication",
+        "compound_ref_numbers": []
+      },
+      "expected_to_fail_before_patch_0001": true,
+      "traps": [
+        "原文跨行：從 PDF 複製會在 'FIDO2/WebAuthn' 後產生硬換行，未修版 parser 會把引用句截成只剩 'standards [79].'（patch 0001 的回歸測試）"
+      ],
+      "notes": "篇名是 device onboarding，主張是 password-free authentication，屬灰色地帶，適合測「不確定」級，但正確答案需人工定。 被引來源是 W3C 規格與 FIDO Alliance 網頁，索引裡沒有摘要（2026-11-22 實測）。",
+      "ref_style": "嚴格 IEEE：篇名加引號",
+      "source_key": "wang_meeting",
+      "source_citation": "汪老師 2026-11-17 meeting 提供的舉例"
+    },
+    {
+      "id": "case2-w3c",
+      "source": "汪老師 2026-11-17 meeting 舉例 2",
+      "is_real_ieee": true,
+      "paragraph": "Innovative Proof Reuse and Revocation: Existing solutions utilize W3C [47], [107], [109], [110] standards for VCs, VP generation, and revocation.",
+      "references": "[47] \"Verifiable credentials data model v1.1,\" W3C. Accessed: Aug. 9, 2024. [Online]. Available: https://www.w3.org/TR/vc-data-model/\n[107] \"Verifiable credentials data model v2.0,\" W3C. Accessed: Aug. 9, 2024. [Online]. Available: https://www.w3.org/TR/vc-data-model-2.0/\n[108] \"General data protection regulation (GDPR),\" European Union, 2018. Accessed: Mar. 23, 2025. [Online]. Available: https://gdpr.eu/\n[109] \"Verifiable credentials overview,\" W3C. Accessed: Aug. 9, 2024. [Online]. Available: https://www.w3.org/TR/vc-overview/\n[110] \"Verifiable credentials bitstring status list,\" W3C. Accessed: Aug. 9, 2024. [Online]. Available: https://www.w3.org/TR/vc-bitstring-status-list/",
+      "expected": {
+        "pair_count": 4,
+        "ref_numbers": [
+          47,
+          107,
+          109,
+          110
+        ],
+        "matched": [
+          47,
+          107,
+          109,
+          110
+        ],
+        "missing_reference": [],
+        "uncited_refs": [
+          108
+        ],
+        "sentence_count": 1,
+        "compound_ref_numbers": [
+          47,
+          107,
+          109,
+          110
+        ]
+      },
+      "traps": [
+        "一句四個編號，測複合引用拆解",
+        "ref 清單含未被引用的 [108]，不可配對給任何引用"
+      ],
+      "notes": "已是 repo mock_data.py 的 MOCK_CLAIM / MOCK_REFERENCES 預設值。 被引來源是 W3C 規格與 FIDO Alliance 網頁，索引裡沒有摘要（2026-11-22 實測）。",
+      "ref_style": "嚴格 IEEE：篇名加引號",
+      "source_key": "wang_meeting",
+      "source_citation": "汪老師 2026-11-17 meeting 提供的舉例"
+    },
+    {
+      "id": "case3-auditors",
+      "source": "研方paper/A Multi-Agent Framework for Citation Hallucination Detection.pdf",
+      "is_real_ieee": false,
+      "paragraph": "Commercial citation auditors such as Citely [9], SwanRef [26], CiteCheck [8], and RefCheck-AI [20] report only a binary Real-or-Fake label [30], and academic auditors such as CiteAudit [24] query multiple bibliographic APIs but still emit the same binary verdict, so the ambiguous middle ground collapses into the same yes/no signal. Open tools such as Hallucinator [25] consult more than ten bibliographic databases in parallel, but key the verdict on title and author and leave venue, year, DOI, pages, and publisher unaudited. GPTZero's hallucination mode [13] does cross-check external sources, but audits only five fields.",
+      "references": "[8] CiteCheck. CiteCheck: Ai-powered citation verification. https://citecheck.ai/, 2024. Accessed: 2026-04.\n[9] Citely. Citely: AI citation assistant. https://citely.ai/, 2024. Accessed: 2026-04.\n[13] GPTZero Team. GPTZero: Detecting AI-generated text, 2023.\n[20] RefCheck-AI. RefCheck-AI. https://github.com/HuaHenry/RefCheck_ai, 2024. Accessed: 2026-04.\n[24] Kaiwen Shi, Weixiang Sun, Zheyuan Zhang, Lichao Sun, Nitesh V Chawla, and Yanfang Ye. Citeaudit: You cited it, but did you read it? a benchmark for verifying scientific references in the llm era. arXiv preprint arXiv:2602.23452, 2026.\n[25] Gianluca Stringhini. Hallucinator: A citation hallucination checker. https://github.com/gianlucasb/hallucinator, 2024.\n[26] SwanRef. SwanRef: Reference verification platform. https://www.swanref.org/, 2024. Accessed: 2026-04.\n[30] L. J. Janse van Rensburg. Ai-powered citation auditing: A zero-assumption protocol for systematic reference verification in academic research, 2025.",
+      "expected": {
+        "pair_count": 8,
+        "ref_numbers": [
+          9,
+          26,
+          8,
+          20,
+          30,
+          24,
+          25,
+          13
+        ],
+        "matched": [
+          8,
+          9,
+          13,
+          20,
+          24,
+          25,
+          26,
+          30
+        ],
+        "missing_reference": [],
+        "uncited_refs": [],
+        "sentence_count": 3,
+        "compound_ref_numbers": [
+          8,
+          9,
+          20,
+          24,
+          26,
+          30
+        ]
+      },
+      "traps": [
+        "三句八個引用，每個編號緊貼工具名稱，拆句或配對偏移會立刻顯現",
+        "[24] 的 ref 含問號 'did you read it?'，測句尾判斷不會誤切"
+      ],
+      "notes": "支持層級需人工讀被引文獻後標註。 ⚠️ 2026-11-22 更正：原本標為 is_real_ieee=true，實際核對原論文後確認這篇用的不是 IEEE 格式。段落與引用編號仍是真實的，可用於配對層測試，但不可用來代表 IEEE 格式的 ref。",
+      "ref_style": "plain／ACM 式：作者在前、篇名不加引號。方括號編號相同，但不是 IEEE 格式",
+      "source_key": "multiagent",
+      "source_citation": "M. Li, Z. Lin, and S. Ma, “Source or it didn’t happen: A multi-agent framework for citation hallucination detection,” arXiv:2605.08583, 2026."
+    },
+    {
+      "id": "case4-venues",
+      "source": "研方paper/A Multi-Agent Framework for Citation Hallucination Detection.pdf",
+      "is_real_ieee": false,
+      "paragraph": "Recent venues documented widespread fabricated references in submitted papers, with third-party tooling flagging dozens of cases per session [12, 27]; ICLR 2026 assembled a desk-reject queue of submissions whose bibliographies contained hallucinated citations [11]; and ACM CCS 2026 published a Transparency Report enumerating the citations its review cycle flagged as AI-fabricated [1].",
+      "references": "[1] ACM CCS 2026 Program Committee. Transparency report on AI-generated citations in ACM CCS 2026 submissions. https://github.com/ACM-CCS-2026/Transparency-Report, 2026. Accessed: 2026-05.\n[11] GPTZero. GPTZero finds over 50 hallucinations in ICLR 2026 submissions. https://gptzero.me/news/iclr-2026, 2025.\n[12] GPTZero. GPTZero flags fabricated citations in NeurIPS submissions. https://gptzero.me/news/neurips/, 2025. Accessed: 2026-05.\n[27] The Register. AI conference's papers contaminated by AI hallucinations. https://www.theregister.com/2026/01/22/neurips_papers_contaiminated_ai_hallucinations/, 2026.",
+      "expected": {
+        "pair_count": 4,
+        "ref_numbers": [
+          12,
+          27,
+          11,
+          1
+        ],
+        "matched": [
+          1,
+          11,
+          12,
+          27
+        ],
+        "missing_reference": [],
+        "uncited_refs": [],
+        "sentence_count": 1,
+        "compound_ref_numbers": [
+          1,
+          11,
+          12,
+          27
+        ]
+      },
+      "traps": [
+        "[12, 27] 是逗號分隔複合引用，和 case2 的 [47], [107] 是不同寫法，IEEE 兩種都合法；目前無任何測試覆蓋",
+        "三個子句用分號串接而非句號，測拆句不會誤把分號當句尾"
+      ],
+      "notes": "最重要的一筆。若 parser 只認各自獨立方括號，[12, 27] 會整個漏掉或被當成不存在的編號。 ⚠️ 2026-11-22 更正：原本標為 is_real_ieee=true，實際核對原論文後確認這篇用的不是 IEEE 格式。段落與引用編號仍是真實的，可用於配對層測試，但不可用來代表 IEEE 格式的 ref。",
+      "ref_style": "plain／ACM 式：作者在前、篇名不加引號。方括號編號相同，但不是 IEEE 格式",
+      "source_key": "multiagent",
+      "source_citation": "M. Li, Z. Lin, and S. Ma, “Source or it didn’t happen: A multi-agent framework for citation hallucination detection,” arXiv:2605.08583, 2026."
+    },
+    {
+      "id": "case5-missing",
+      "source": "paper-reading/paper-temp-storage/Security_of_Internet_of_Agents_Attacks_and_Countermeasures.pdf（IEEE 期刊，排版用 “…” 彎引號）：Related Work，ref 清單故意只貼一部分",
+      "is_real_ieee": true,
+      "ref_style": "嚴格 IEEE：“…”",
+      "paragraph": "Das\net al. [12] provide an in-depth survey of security and privacy\nvulnerabilities in LLMs, evaluating domain-specific risks and\ndefenses across transportation, education, and healthcare. He\net al. [13] categorize emerging threats to LLM-driven agents,\nillustrates their real-world impacts, and reviews prevailing\nmitigation techniques. Wang et al. [14] examine attack vectors\nat five critical stages: pre-training, fine-tuning, retrievalaugmented generation (RAG), deployment, and in-agent operation, as well as tailored countermeasures.",
+      "references": "[12] B. C. Das, M. H. Amini, and Y. Wu, “Security and privacy challenges of large language models: A survey,” ACM Comput. Surveys, vol. 57, no. 6, 2025.\n[13] F. He, T. Zhu, D. Ye, B. Liu, W. Zhou, and P. S. Yu, “The emerged security and privacy of LLM agent: A survey with case studies,” 2024, arXiv:2407.19354.",
+      "expected": {
+        "pair_count": 3,
+        "ref_numbers": [
+          12,
+          13,
+          14
+        ],
+        "matched": [
+          12,
+          13
+        ],
+        "missing_reference": [
+          14
+        ],
+        "uncited_refs": [],
+        "compound_ref_numbers": [],
+        "claim_must_contain": {
+          "12": "in-depth survey",
+          "14": "five critical stages"
+        }
+      },
+      "traps": [
+        "[14] 內文有、ref 清單沒有，必須輸出 MISSING_REFERENCE",
+        "不可把 missing_reference 算成「不支持」",
+        "「Das\\net al. [12]」跨行，且 al. 不可當句尾"
+      ],
+      "notes": "11/17 定的輸入是使用者自己貼，只貼部分 ref 是真實會發生的。段落與 ref 皆取自真論文，非合成。",
+      "source_key": "ioa",
+      "source_citation": "Y. Wang, Y. Pan, S. Guo, and Z. Su, “Security of Internet of Agents: Attacks and countermeasures,” IEEE Open J. Comput. Soc., 2025, doi: 10.1109/OJCS.2025.3589638."
+    },
+    {
+      "id": "case6-pdfnoise",
+      "source": "paper-reading/paper-temp-storage/Security_of_Internet_of_Agents_Attacks_and_Countermeasures.pdf（IEEE 期刊，排版用 “…” 彎引號）：協定段，ref 為 pdftotext 原始輸出含頁尾雜訊",
+      "is_real_ieee": true,
+      "ref_style": "嚴格 IEEE：“…”",
+      "paragraph": "Standardized agent communication protocols are key enablers\nfor the IoA to facilitate seamless interaction, coordination,\nand secure interoperability among heterogeneous agents [22],\n[23], [24], [25]. Recently, the following representative protocols are developed to support structured messaging, identity\nverification, and tool integration within distributed agent\necosystems.",
+      "references": "[22] Anthropic, “Model context protocol (MCP),” Accessed: Jan. 2024.\n[Online] Available: \"https://www.anthropic.com/news/model-contextprotocol\"\n\nVOLUME 6, 2025\n\n[23] Google, “Agent to agent protocol (A2A),” Accessed: Apr. 2025. [Online]. Available: https://google.github.io/A2A\n[24] “Agent network protocol (ANP),” 2024, Accessed: Jan. 20, 2025. [Online] Available:https://agentnetworkprotocol.com/en/\n[25] E. A. University of Oxford, “Agora protocol,” Accessed: Apr. 26, 2025.\n[Online] Available: https://agoraprotocol.org",
+      "expected": {
+        "pair_count": 4,
+        "ref_numbers": [
+          22,
+          23,
+          24,
+          25
+        ],
+        "compound_ref_numbers": [
+          22,
+          23,
+          24,
+          25
+        ],
+        "claim_must_contain": {
+          "22": "Standardized agent communication protocols"
+        },
+        "matched": [
+          22,
+          23,
+          24,
+          25
+        ],
+        "missing_reference": [],
+        "uncited_refs": []
+      },
+      "traps": [
+        "ref 清單中間夾了頁尾「VOLUME 6, 2025」",
+        "[Online] Available: 是續行，不可誤判成新的 ref",
+        "[22] 的網址被 PDF 換行吃掉連字號（model-contextprotocol）",
+        "引用標記 [22],\\n[23], [24], [25] 跨行",
+        "[22] 的篇名是「Model context protocol (MCP)」，右括號是篇名的一部分，不可跟結尾逗號一起砍掉"
+      ],
+      "notes": "全部是 pdftotext 實際抽出的原樣，沒有人工加工。",
+      "source_key": "ioa",
+      "source_citation": "Y. Wang, Y. Pan, S. Guo, and Z. Su, “Security of Internet of Agents: Attacks and countermeasures,” IEEE Open J. Comput. Soc., 2025, doi: 10.1109/OJCS.2025.3589638."
+    },
+    {
+      "id": "case7-redaction-relatedwork",
+      "source": "paper-reading/paper-temp-storage/Enabling Secure and Scalable GDPR Compliant Blockchain Based e-KYC With Efficient Redaction.pdf（IEEE Access，DOI 10.1109/ACCESS.2025.3594656）：Related Work 的 redaction 段",
+      "is_real_ieee": true,
+      "ref_style": "嚴格 IEEE：[21] 用 ‘‘…’’，[27][28] 用 \"…\"，同一篇論文混用兩種引號",
+      "paragraph": "Xu et al. [21] incorporated trapdoor hash functions in their\nPRHBS system to facilitate secure and flexible redactions\nin the healthcare sector. In [27], The authors introduced\na secure, efficient, and accountable data management approach utilizing a redactable blockchain. They also developed a distributed trapdoor recovery mechanism that ensures\nboth efficiency and accountability. Recently, Wang [28] et\nal. present a redactable blockchain framework that supports\nboth transaction-level and block-level rewriting.",
+      "references": "[21] J. Xu et al., ‘‘A Privacy-Preserving and Redactable Healthcare Blockchain System,’’ IEEE Transactions on Services Computing, vol. 17, no. 2, pp. 364–377, Mar.-Apr. 2024, doi: 10.1109/TSC.2024.3356959.\n[27] Y. Xu et al., \"Redactable Blockchain-Based Secure and Accountable Data Management,\" in IEEE Transactions on Network and Service Management, vol. 21, no. 2, pp. 1764–1776, April 2024, doi: 10.1109/TNSM.2023.3352561.\n[28] Y. Wang, H. Peng, J. Duan, L. Wang, X. Hu and Z. Zhao, \"Resilient and Redactable Blockchain With Two-Level Rewriting and Forgery Detection,\" in IEEE Transactions on Information Forensics and Security, vol. 20, pp. 1163–1175, 2025, doi: 10.1109/TIFS.2024.3250830.",
+      "expected": {
+        "pair_count": 3,
+        "ref_numbers": [
+          21,
+          27,
+          28
+        ],
+        "matched": [
+          21,
+          27,
+          28
+        ],
+        "missing_reference": [],
+        "uncited_refs": [],
+        "compound_ref_numbers": [],
+        "claim_must_contain": {
+          "21": "trapdoor hash functions",
+          "28": "transaction-level"
+        }
+      },
+      "traps": [
+        "「Xu et al. [21]」、「Wang [28] et al.」的 al. 不可當句尾",
+        "「… sector. In [27],」句號後接大寫 In，是真的句尾，要切開",
+        "同一篇論文混用兩種引號，篇名都要抽得到"
+      ],
+      "notes": "著者對 [21][27][28] 的描述具體（trapdoor hash、distributed trapdoor recovery、two-level rewriting），適合做內容查證的正確答案標註。",
+      "source_key": "ekyc",
+      "source_citation": "S. Fugkeaw, S. Sungchai, S. Nakprame, and P. Sreekongpan, “Enabling secure and scalable GDPR-compliant blockchain-based e-KYC with efficient redaction,” IEEE Access, 2025, doi: 10.1109/ACCESS.2025.3594656."
+    },
+    {
+      "id": "case8-zksnark",
+      "source": "paper-reading/paper-temp-storage/Enabling Secure and Scalable GDPR Compliant Blockchain Based e-KYC With Efficient Redaction.pdf（IEEE Access，DOI 10.1109/ACCESS.2025.3594656）：Related Work 的隱私保護段",
+      "is_real_ieee": true,
+      "ref_style": "嚴格 IEEE：‘‘…’’",
+      "paragraph": "In addition to supporting data redaction, several models prioritize privacy-preserving mechanisms to protect user\nanonymity. Heo et al. [16] introduced zk-SNARKs to enhance\nprivacy by generating one-time cryptographic keys for transactions, ensuring that user identities cannot be tracked.",
+      "references": "[16] W. J. Heo et al., ‘‘Decentralised Redactable Blockchain: A Privacy-Preserving Approach to Addressing Identity Tracking Challenges,’’ 2024 IEEE International Conference on Blockchain and Cryptocurrency (ICBC), Dublin, Ireland, 2024, pp. 215–219, doi: 10.1109/ICBC59979.2024.10644348.",
+      "expected": {
+        "pair_count": 1,
+        "ref_numbers": [
+          16
+        ],
+        "matched": [
+          16
+        ],
+        "missing_reference": [],
+        "uncited_refs": [],
+        "compound_ref_numbers": [],
+        "claim_must_contain": {
+          "16": "zk-SNARKs"
+        }
+      },
+      "traps": [
+        "第一句沒有引用，不可產生查核項目",
+        "被引文獻篇名是 Decentralised Redactable Blockchain，沒有 zk-SNARK 字樣——篇名判斷會很吃力"
+      ],
+      "notes": "篇名不含 zk-SNARK，但內容應該有。適合用來測「篇名不相關就停止」這條規則會不會誤殺。",
+      "source_key": "ekyc",
+      "source_citation": "S. Fugkeaw, S. Sungchai, S. Nakprame, and P. Sreekongpan, “Enabling secure and scalable GDPR-compliant blockchain-based e-KYC with efficient redaction,” IEEE Access, 2025, doi: 10.1109/ACCESS.2025.3594656."
+    },
+    {
+      "id": "case9-ipfs",
+      "source": "paper-reading/paper-temp-storage/Enabling Secure and Scalable GDPR Compliant Blockchain Based e-KYC With Efficient Redaction.pdf（IEEE Access，DOI 10.1109/ACCESS.2025.3594656）：Related Work 的 IPFS 段",
+      "is_real_ieee": true,
+      "ref_style": "嚴格 IEEE：‘‘…’’",
+      "paragraph": "The integration of revocable IPFS with redactable\nblockchain models is another noteworthy approach to improving data management and ensuring compliance. Yeh et al.\n[14] leveraged revocable IPFS to enable selective removal of\nfiles, maintaining both privacy and usability in their GDPR-\ncompliant framework. Guo et al. [17] employed a similar\nmethod for managing EHRs, enabling rapid redactions and\nensuring compliance with privacy regulations.",
+      "references": "[14] L.-Y. Yeh et al., ‘‘GDPR-Compliant Personal Health Record Transmission With Redactable Blockchain and Revocable IPFS,’’ IEEE Transactions on Dependable and Secure Computing, vol. 21, no. 4, pp. 3342–3356, 2024, doi: 10.1109/TDSC.2023.3259071.\n[17] H. Guo et al., ‘‘Decentralized Electronic Health Records Management via Redactable Blockchain and Revocable IPFS,’’ 2024 IEEE/ACM Conference on Connected Health, Wilmington, DE, USA, 2024, pp. 167–171, doi: 10.1109/CHASE60773.2024.00028.",
+      "expected": {
+        "pair_count": 2,
+        "ref_numbers": [
+          14,
+          17
+        ],
+        "matched": [
+          14,
+          17
+        ],
+        "missing_reference": [],
+        "uncited_refs": [],
+        "compound_ref_numbers": [],
+        "claim_must_contain": {
+          "14": "revocable IPFS",
+          "17": "EHRs"
+        }
+      },
+      "traps": [
+        "「Yeh et al.\\n[14]」引用編號被硬換行切到下一行",
+        "「GDPR-\\ncompliant」行尾連字號必須接回去，不可變成 GDPR- compliant"
+      ],
+      "notes": "這是從 PDF 直接複製的原始換行，包含行尾連字號。",
+      "source_key": "ekyc",
+      "source_citation": "S. Fugkeaw, S. Sungchai, S. Nakprame, and P. Sreekongpan, “Enabling secure and scalable GDPR-compliant blockchain-based e-KYC with efficient redaction,” IEEE Access, 2025, doi: 10.1109/ACCESS.2025.3594656."
+    },
+    {
+      "id": "case10-performance",
+      "source": "paper-reading/paper-temp-storage/Enabling Secure and Scalable GDPR Compliant Blockchain Based e-KYC With Efficient Redaction.pdf（IEEE Access，DOI 10.1109/ACCESS.2025.3594656）：實驗結果段",
+      "is_real_ieee": true,
+      "ref_style": "嚴格 IEEE：‘‘…’’",
+      "paragraph": "Figs. 2 and 3 present the authentication, proof generation,\nand verification times across different schemes. Scheme [2],\nrelying on RSA, incurs the highest computational cost due\nto expensive modular exponentiations. Scheme [6], though\nsecure with quantum key mechanisms, suffers from significant overhead caused by quantum network setup and key exchange protocols. Scheme [13] improves efficiency by using\nelliptic curve cryptography (ECC) with hashing and modular\naddition, but still faces moderate overhead from ECC operations.",
+      "references": "[2] S. Fugkew, ‘‘Enabling Trust and Privacy-Preserving e-KYC System Using Blockchain,’’ IEEE Access, vol. 10, pp. 49028–49039, 2022, doi: 10.1109/ACCESS.2022.3172973.\n[6] G. M. Faruk Ahmed et al., ‘‘Enhancing e-KYC Security and Privacy: Harnessing Quantum Computing and Blockchain in Web 3.0,’’ Distributed Ledger Technologies: Research and Practice, 2024, doi: 10.1145/3686166.\n[13] K. Takaragi et al., ‘‘Secure Revocation Features in eKYC-Privacy Protection in Central Bank Digital Currency,’’ IEEE Transactions on Fundamentals of Electronics, Communications, and Computer Sciences, vol. 3, 2023, pp. 325–332.",
+      "expected": {
+        "pair_count": 3,
+        "ref_numbers": [
+          2,
+          6,
+          13
+        ],
+        "matched": [
+          2,
+          6,
+          13
+        ],
+        "missing_reference": [],
+        "uncited_refs": [],
+        "compound_ref_numbers": [],
+        "claim_must_contain": {
+          "2": "RSA",
+          "13": "elliptic curve cryptography"
+        }
+      },
+      "traps": [
+        "「Figs.」後面的句號不可當句尾",
+        "第一句沒有引用編號，不可產生查核項目"
+      ],
+      "notes": "這段是對被引文獻「效能特性」的主張，要驗證得讀被引文獻的實驗節。",
+      "source_key": "ekyc",
+      "source_citation": "S. Fugkeaw, S. Sungchai, S. Nakprame, and P. Sreekongpan, “Enabling secure and scalable GDPR-compliant blockchain-based e-KYC with efficient redaction,” IEEE Access, 2025, doi: 10.1109/ACCESS.2025.3594656."
+    },
+    {
+      "id": "case11-ioa-relatedwork",
+      "source": "paper-reading/paper-temp-storage/Security_of_Internet_of_Agents_Attacks_and_Countermeasures.pdf（IEEE 期刊，排版用 “…” 彎引號）：Related Work 全段",
+      "is_real_ieee": true,
+      "ref_style": "嚴格 IEEE：“…”",
+      "paragraph": "Das\net al. [12] provide an in-depth survey of security and privacy\nvulnerabilities in LLMs, evaluating domain-specific risks and\ndefenses across transportation, education, and healthcare. He\net al. [13] categorize emerging threats to LLM-driven agents,\nillustrates their real-world impacts, and reviews prevailing\nmitigation techniques. Wang et al. [14] examine attack vectors\nat five critical stages: pre-training, fine-tuning, retrievalaugmented generation (RAG), deployment, and in-agent operation, as well as tailored countermeasures. Gan et al. [15]\nintroduce a two-axis taxonomy of security challenges in LLM\nagents by threat source and impact, and analyze representative\nagent implementations as case studies. Li et al. [16] outline the architecture and optimization workflows of personal\nLLM agents, highlighting associated security and privacy concerns.",
+      "references": "[12] B. C. Das, M. H. Amini, and Y. Wu, “Security and privacy challenges of large language models: A survey,” ACM Comput. Surveys, vol. 57, no. 6, 2025.\n[13] F. He, T. Zhu, D. Ye, B. Liu, W. Zhou, and P. S. Yu, “The emerged security and privacy of LLM agent: A survey with case studies,” 2024, arXiv:2407.19354.\n[14] S. Wang et al., “Unique security and privacy threats of large language model: A comprehensive survey,” 2024, arXiv:2406.07973.\n[15] Y. Gan et al., “Navigating the risks: A survey of security, privacy, and ethics threats in LLM-based agents,” 2024, arXiv:2411.09523.\n[16] Y. Li et al., “Personal LLM agents: Insights and survey about the capability, efficiency and security,” 2024, arXiv:2401.05459.",
+      "expected": {
+        "pair_count": 5,
+        "ref_numbers": [
+          12,
+          13,
+          14,
+          15,
+          16
+        ],
+        "matched": [
+          12,
+          13,
+          14,
+          15,
+          16
+        ],
+        "missing_reference": [],
+        "uncited_refs": [],
+        "compound_ref_numbers": [],
+        "claim_must_contain": {
+          "15": "two-axis taxonomy",
+          "16": "personal"
+        }
+      },
+      "traps": [
+        "五個作者名後面都有 et al.，都不可當句尾",
+        "每句各一個引用，全部不是複合引用"
+      ],
+      "notes": "每一句都對被引文獻做了具體主張（in-depth survey、two-axis taxonomy…），是最適合做內容查證的一筆。",
+      "source_key": "ioa",
+      "source_citation": "Y. Wang, Y. Pan, S. Guo, and Z. Su, “Security of Internet of Agents: Attacks and countermeasures,” IEEE Open J. Comput. Soc., 2025, doi: 10.1109/OJCS.2025.3589638."
+    },
+    {
+      "id": "case12-kyc-relatedwork",
+      "source": "paper-reading/paper-temp-storage/Ethereum_Blockchain_Framework_Enabling_Banks_to_Know_Their_Customers.pdf（IEEE Access，排版用 ‘‘…’’）：Related Work",
+      "is_real_ieee": true,
+      "ref_style": "嚴格 IEEE：‘‘…’’",
+      "paragraph": "In work paper [18],\nSai et al. suggested a blockchain KYC system modeled after\nthe microfinance system. The proposed system was tested in\nprivate blockchain scenarios using Polygon, an enormously\ndistributed platform. In an article [19], Norvill et al. proposed\na framework which enables automation and permission\ndocument sharing over the blockchain to streamline the KYC\nprocess.\nIn a research paper [20], Ullah et al. suggested a\nHyperledger Fabric network that optimizes the KYC process.\nIn this model, the customer has complete ownership rights\nof the smart contracts that contain their KYC data in the\ndistributed ledger database. Nevertheless, the work does not\nfocus on the confidentiality and key management factors\nof the KYC process. In this article [21], Karadag et al.\nsuggest the blockchain-based KYC model, which illustrates\nthe transparent sharing of loan allocation data for bank\ncustomers.",
+      "references": "[18] B. D. S. Sai, R. Nikhil, S. Prasad, and N. S. Naik, ‘‘A decentralized KYCbased approach for microfinance using blockchain technology,’’ Cyber Secur. Appl., vol. 1, Dec. 2023, Art. no. 100009.\n[19] R. Norvill, M. Steichen, W. M. Shbair, and R. State, ‘‘Demo: Blockchain for the simplification and automation of KYC result sharing,’’ in Proc. IEEE Int. Conf. Blockchain Cryptocurrency (ICBC), May 2019, pp. 9–10.\n[20] N. Ullah, K. A. Al-Dhlan, and W. M. Al-Rahmi, ‘‘KYC optimization by blockchain based hyperledger fabric network,’’ Cyber Secur. Appl., vol. 1, pp. 1294–1299, Mar. 2021.\n[21] B. Karadag, A. Halim Zaim, and A. Akbulut, ‘‘Blockchain-based KYC model for credit allocation in banking,’’ IEEE Access, vol. 12, pp. 80176–80182, 2024.",
+      "expected": {
+        "pair_count": 4,
+        "ref_numbers": [
+          18,
+          19,
+          20,
+          21
+        ],
+        "matched": [
+          18,
+          19,
+          20,
+          21
+        ],
+        "missing_reference": [],
+        "uncited_refs": [],
+        "compound_ref_numbers": [],
+        "claim_must_contain": {
+          "18": "microfinance",
+          "21": "loan allocation"
+        }
+      },
+      "traps": [
+        "引用在作者名之前：「In work paper [18], Sai et al. suggested…」，與其他 case 的「作者 [n]」語序相反",
+        "Sai / Norvill / Ullah / Karadag 四個 et al. 都不可當句尾",
+        "[18] 的篇名被 PDF 換行吃掉連字號：KYCbased（原為 KYC-based）",
+        "段落中有兩句沒有引用編號，不可產生查核項目"
+      ],
+      "notes": "「The proposed system was tested in private blockchain scenarios using Polygon」這句講的是 [18] 的系統，但句子本身沒有引用編號，依老師定的規則會被捨棄。這是方法本身的限制，不是程式錯，但值得記下來。",
+      "source_key": "ethkyc",
+      "source_citation": "C. V. Kumar, P. Selvaprabhu, N. Baska, U. V. Menon, V. B. Kumaravelu, S. Chinnadurai, and F. Ali, “Ethereum blockchain framework enabling banks to know their customers,” IEEE Access, vol. 12, 2024, doi: 10.1109/ACCESS.2024.3427805."
+    }
+  ],
+  "comparison_design": "同一批段落＋ref 同時丟給方法 A 與方法 B，比較兩者的支持分數與證據層級。沒有 ground truth，所以測得出兩方法「一不一致」，測不出「誰對」。",
+  "sources": {
+    "ekyc": {
+      "key": "ekyc",
+      "citation": "S. Fugkeaw, S. Sungchai, S. Nakprame, and P. Sreekongpan, “Enabling secure and scalable GDPR-compliant blockchain-based e-KYC with efficient redaction,” IEEE Access, 2025, doi: 10.1109/ACCESS.2025.3594656.",
+      "venue": "IEEE Access",
+      "year": 2025,
+      "doi": "10.1109/ACCESS.2025.3594656",
+      "ref_quote_style": "‘‘…’’（兩個彎單引號）",
+      "file": "~/Desktop/paper-reading/paper-temp-storage/Enabling Secure and Scalable GDPR Compliant Blockchain Basede-KYC WithEfficient Redaction.pdf"
+    },
+    "ioa": {
+      "key": "ioa",
+      "citation": "Y. Wang, Y. Pan, S. Guo, and Z. Su, “Security of Internet of Agents: Attacks and countermeasures,” IEEE Open J. Comput. Soc., 2025, doi: 10.1109/OJCS.2025.3589638.",
+      "venue": "IEEE Open Journal of the Computer Society",
+      "year": 2025,
+      "doi": "10.1109/OJCS.2025.3589638",
+      "ref_quote_style": "“…”（彎雙引號）",
+      "file": "~/Desktop/paper-reading/paper-temp-storage/Security_of_Internet_of_Agents_Attacks_and_Countermeasures.pdf"
+    },
+    "ethkyc": {
+      "key": "ethkyc",
+      "citation": "C. V. Kumar, P. Selvaprabhu, N. Baska, U. V. Menon, V. B. Kumaravelu, S. Chinnadurai, and F. Ali, “Ethereum blockchain framework enabling banks to know their customers,” IEEE Access, vol. 12, 2024, doi: 10.1109/ACCESS.2024.3427805.",
+      "venue": "IEEE Access",
+      "year": 2024,
+      "doi": "10.1109/ACCESS.2024.3427805",
+      "ref_quote_style": "‘‘…’’（兩個彎單引號）",
+      "file": "~/Desktop/paper-reading/paper-temp-storage/Ethereum_Blockchain_Framework_Enabling_Banks_to_Know_Their_Customers.pdf"
+    },
+    "multiagent": {
+      "key": "multiagent",
+      "citation": "M. Li, Z. Lin, and S. Ma, “Source or it didn’t happen: A multi-agent framework for citation hallucination detection,” arXiv:2605.08583, 2026.",
+      "venue": "arXiv preprint",
+      "year": 2026,
+      "doi": "",
+      "arxiv": "2605.08583",
+      "ref_quote_style": "無引號（plain／ACM 式，非 IEEE）",
+      "file": "研方paper/A Multi-Agent Framework for Citation Hallucination Detection.pdf",
+      "note": "參考文獻不是 IEEE 格式，不在老師定的範圍內。保留是因為配對層測試與格式無關。"
+    },
+    "wang_meeting": {
+      "key": "wang_meeting",
+      "citation": "汪老師 2026-11-17 meeting 提供的舉例",
+      "venue": "meeting 紀錄",
+      "year": 2026,
+      "doi": "",
+      "ref_quote_style": "“…”（彎雙引號）",
+      "file": "Obsidian 研方課程/meeting/2026-11-17 meeting後統整.md"
+    }
+  }
+}
