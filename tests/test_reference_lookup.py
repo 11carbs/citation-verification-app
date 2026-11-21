@@ -261,3 +261,52 @@ def test_closing_bracket_inside_the_title_is_kept(ref_raw: str, expected_title: 
     """結尾的逗號要去掉，但成對的右括號是篇名的一部分，不可一起砍。"""
 
     assert extract_reference_metadata(ref_raw).title == expected_title
+
+
+KYC_REF = ("[18] B. D. S. Sai, R. Nikhil, S. Prasad, and N. S. Naik, \u2018\u2018A decentralized\n"
+           "KYCbased approach for microfinance using blockchain technology,\u2019\u2019\n"
+           "Cyber Secur. Appl., vol. 1, Dec. 2023, Art. no. 100009.")
+KYC_REAL_TITLE = ("A decentralized KYC-based approach for microfinance using "
+                  "blockchain technology")
+
+
+def test_empty_match_result_does_not_crash() -> None:
+    """search/match 回 {"data": []} 時不可 IndexError。"""
+
+    http = FakeHttp({"search/match": (200, {"data": []}, "")})
+    result = ReferenceLookupAdapter(http=http).lookup(pair(ISIK_REF, 2))
+    assert result.source_status is SourceStatus.NOT_FOUND
+
+
+def test_relevance_search_rescues_a_title_whose_hyphen_the_pdf_ate() -> None:
+    """PDF 把 KYC-based 的連字號吃掉，精確比對查不到，關聯查詢救得回來。"""
+
+    assert extract_reference_metadata(KYC_REF).title == (
+        "A decentralized KYCbased approach for microfinance using blockchain technology"
+    )
+    http = FakeHttp({
+        "search/match": (200, {"data": []}, ""),
+        "/paper/search": (200, {"data": [
+            {"title": "Something unrelated about microfinance", "abstract": "NOPE"},
+            {"title": KYC_REAL_TITLE, "abstract": "KYC ABS"},
+        ]}, ""),
+    })
+    result = ReferenceLookupAdapter(http=http).lookup(pair(KYC_REF, 18))
+    assert result.abstract == "KYC ABS"
+    assert result.source_status is SourceStatus.GOT_ABSTRACT
+    assert "關聯查詢找到" in result.source_note
+
+
+def test_relevance_search_still_rejects_a_different_paper() -> None:
+    """放寬的是檢索方式，不是判斷標準：相似度門檻照舊擋。"""
+
+    http = FakeHttp({
+        "search/match": (200, {"data": []}, ""),
+        "/paper/search": (200, {"data": [
+            {"title": "A completely different paper about something else",
+             "abstract": "WRONG"},
+        ]}, ""),
+    })
+    result = ReferenceLookupAdapter(http=http).lookup(pair(KYC_REF, 18))
+    assert result.abstract == ""
+    assert "篇名不符" in result.source_note
