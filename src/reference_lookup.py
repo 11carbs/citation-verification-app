@@ -9,7 +9,8 @@
 - 查詢失敗：過程中被限流或連不上，沒有查成功。這不代表文獻不存在
 
 金鑰都可省略，但都建議給：
-- Semantic Scholar 不給金鑰也能用，容易被限流（HTTP 429）
+- Semantic Scholar 不給金鑰也能用，容易被限流（HTTP 429）。金鑰以 x-api-key 標頭送出，
+  核發的額度是 1 RPS 且跨所有 endpoint 累計，RequestsClient 的間隔已設 1.2 秒
 - OpenAlex 自 2026-02-13 起改為金鑰制，polite pool 已退場。沒有金鑰每天只有
   100 credits，超過就會被擋；免費金鑰可拉到 100,000。沒給金鑰仍會嘗試查詢
 
@@ -72,7 +73,10 @@ def rebuild_openalex_abstract(inverted: dict | None) -> str:
 class RequestsClient:
     """requests wrapper with timeout, retry on 429/5xx and a minimum call interval."""
 
-    def __init__(self, min_interval: float = 1.0, retries: int = 3, timeout: float = 15) -> None:
+    # Semantic Scholar 核發金鑰的信寫「1 request per second, cumulative across all
+    # endpoints」並要求 set your rate limit to below this threshold，所以留 20% 餘裕，
+    # 不要剛好卡在 1.0。這個間隔是全域的，涵蓋 Semantic Scholar 與 OpenAlex 的呼叫。
+    def __init__(self, min_interval: float = 1.2, retries: int = 3, timeout: float = 15) -> None:
         self.session = requests.Session()
         self.min_interval = min_interval
         self.retries = retries
