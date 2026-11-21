@@ -211,3 +211,34 @@ def test_openalex_runs_without_a_key() -> None:
     assert result.abstract == "No key"
     assert result.abstract_source == "openalex"
     assert "沒有 OpenAlex 金鑰" in result.source_note
+
+
+IEEE_ACCESS_REF = (
+    "[2] S. Fugkew, \u2018\u2018Enabling Trust and Privacy-Preserving e-KYC System Using\n"
+    "Blockchain,\u2019\u2019 IEEE Access, vol. 10, pp. 49028\u201349039, 2022,\n"
+    "doi: 10.1109/ACCESS.2022.3172973."
+)
+
+
+@pytest.mark.parametrize(
+    ("label", "ref_raw"),
+    [
+        ("彎引號", '[1] A. B, \u201cTitle one,\u201d J., 2024.'),
+        ("直引號", '[1] A. B, "Title one," J., 2024.'),
+        ("兩個彎單引號", "[1] A. B, \u2018\u2018Title one,\u2019\u2019 J., 2024."),
+        ("兩個直單引號", "[1] A. B, ''Title one,'' J., 2024."),
+        ("LaTeX 反引號", "[1] A. B, ``Title one,'' J., 2024."),
+    ],
+)
+def test_title_quotes_in_every_ieee_rendering(label: str, ref_raw: str) -> None:
+    """同一筆 IEEE ref 在不同排版下引號不同，篇名都要抽得到。"""
+
+    assert extract_reference_metadata(ref_raw).title == "Title one", label
+
+
+def test_ieee_access_style_reference() -> None:
+    """IEEE Access 的 PDF 用 \u2018\u2018…\u2019\u2019，這是實際踩到的情況。"""
+
+    meta = extract_reference_metadata(IEEE_ACCESS_REF)
+    assert meta.title == "Enabling Trust and Privacy-Preserving e-KYC System Using Blockchain"
+    assert meta.doi == "10.1109/access.2022.3172973"
