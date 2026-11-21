@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
-from src.schemas import CitationPair, EvidenceLevel, SourceStatus
+from src.schemas import CitationPair, EvidenceBasis, SourceStatus
 
 
 class TitleRelevance(StrEnum):
@@ -28,6 +28,8 @@ class ReferenceLookupResult:
     abstract: str = ""
     source_status: SourceStatus = SourceStatus.PENDING
     error_message: str = ""
+    source_note: str = ""
+    abstract_source: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,7 +40,7 @@ class JevJudgmentResult:
     title_probabilities: dict[str, float]
     confidence: float
     support_score: float
-    evidence_level: EvidenceLevel
+    evidence_basis: EvidenceBasis
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.confidence <= 1.0:

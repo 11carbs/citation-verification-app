@@ -133,7 +133,7 @@ if st.session_state.show_results:
         else:
             st.info("方法 A 與方法 B 尚未串接，因此相關結果欄位暫時留白。")
         st.markdown(
-            "**暫定分級顏色：** "
+            "**證據層級顏色：** "
             "<span style='background:#E8F5E9;color:#1B5E20;padding:3px 10px;"
             "border-radius:12px;font-weight:600'>支持</span> "
             "<span style='background:#FFF3E0;color:#A65300;padding:3px 10px;"

@@ -16,11 +16,11 @@ OUTPUT_COLUMNS = [
     "ref 配對狀態",
     "錯誤狀態",
     "方法 A 支持分數",
+    "方法 A 判斷依據",
     "方法 A 證據層級",
-    "方法 A 暫定分級",
     "方法 B 支持分數",
+    "方法 B 判斷依據",
     "方法 B 證據層級",
-    "方法 B 暫定分級",
 ]
 
 SUPPORT_BAND_COLORS = {
@@ -50,7 +50,7 @@ def support_band_style(value: object) -> str:
 def style_output_dataframe(frame: pd.DataFrame) -> pd.io.formats.style.Styler:
     """Color only the two support-band columns, leaving evidence data intact."""
 
-    band_columns = ["方法 A 暫定分級", "方法 B 暫定分級"]
+    band_columns = ["方法 A 證據層級", "方法 B 證據層級"]
     return frame.style.map(support_band_style, subset=band_columns)
 
 

@@ -28,7 +28,7 @@ def test_method_b_columns_are_blank_before_integration() -> None:
     frame = build_output_dataframe(mock_analysis_rows())
     assert frame["方法 B 支持分數"].isna().all()
     assert (frame["方法 B 證據層級"] == "").all()
-    assert (frame["方法 B 暫定分級"] == "").all()
+    assert (frame["方法 B 證據層級"] == "").all()
 
 
 def test_support_band_colors_are_distinct() -> None:

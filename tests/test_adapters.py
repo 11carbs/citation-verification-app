@@ -4,7 +4,7 @@ from src.adapters import JevJudgmentResult, TitleRelevance
 from src.mock_adapters import MockJevAdapter, MockReferenceLookupAdapter
 from src.mock_data import MOCK_CLAIM, MOCK_REFERENCES
 from src.pairing import build_citation_pairs
-from src.schemas import EvidenceLevel, SourceStatus
+from src.schemas import EvidenceBasis, SourceStatus
 
 
 def test_mock_reference_adapter_simulates_abstract() -> None:
@@ -12,7 +12,7 @@ def test_mock_reference_adapter_simulates_abstract() -> None:
     result = MockReferenceLookupAdapter().lookup(pair)
 
     assert result.ref_number == 47
-    assert result.source_status is SourceStatus.VERIFIED
+    assert result.source_status is SourceStatus.GOT_ABSTRACT
     assert result.abstract.startswith("[MOCK]")
 
 
@@ -23,7 +23,7 @@ def test_mock_jev_adapter_is_deterministic() -> None:
 
     assert result.title_choice is TitleRelevance.RELATED
     assert result.support_score == 0.82
-    assert result.evidence_level is EvidenceLevel.ABSTRACT
+    assert result.evidence_basis is EvidenceBasis.ABSTRACT
     assert sum(result.title_probabilities.values()) == pytest.approx(1.0)
 
 
@@ -34,7 +34,7 @@ def test_jev_contract_rejects_invalid_probability_total() -> None:
             title_probabilities={"相關": 0.8, "不確定": 0.8, "不相關": 0.1},
             confidence=0.8,
             support_score=0.7,
-            evidence_level=EvidenceLevel.ABSTRACT,
+            evidence_basis=EvidenceBasis.ABSTRACT,
         )
 
 
