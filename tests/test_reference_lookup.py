@@ -28,6 +28,9 @@ PHANTOM_REF = ("[1] A. Smith, L. Jones, and M. Patel, “Undergraduate cs\n"
                "education and industry readiness: A longitudinal study,”\n"
                "Computing in Higher Education, 2020")
 BOOK_REF = "[5] A. Author, Book Title Without Quotes, 2nd ed. City, Country: Publisher, 2020."
+ARXIV_REF = ("[7] Y. Lin, “SemanticCite: Citation verification with AI-powered full-text\n"
+             "analysis,” arXiv:2511.16198, 2025.")
+ARXIV_ONLY_REF = "[8] Some Lab. RefVerifier. arXiv:2609.07652, 2026."
 
 
 def pair(ref_raw: str, ref_number: int = 1) -> CitationPair:
@@ -128,7 +131,8 @@ def test_wrong_doi_falls_back_to_title() -> None:
 def test_rate_limit_is_not_reported_as_nonexistent() -> None:
     http = FakeHttp({"search/match": (None, None, "HTTP 429")})
     result = ReferenceLookupAdapter(http=http).lookup(pair(ISIK_REF, 2))
-    assert result.source_status is SourceStatus.NOT_FOUND
+    assert result.source_status is SourceStatus.LOOKUP_FAILED
+    assert result.source_status is not SourceStatus.NOT_FOUND
     assert "不代表文獻不存在" in result.error_message
 
 
@@ -172,3 +176,38 @@ def test_pipeline_accepts_lookup_result(ref_raw: str) -> None:
     pairs = build_citation_pairs(f"Claim [{number}].", ref_raw)
     rows = run_method_a_pipeline(pairs, ReferenceLookupAdapter(http=FakeHttp({})), MockJevAdapter())
     assert rows[0].method_a is not None
+
+
+def test_arxiv_id_is_extracted() -> None:
+    assert extract_reference_metadata(ARXIV_REF).arxiv_id == "2511.16198"
+    assert extract_reference_metadata(ARXIV_ONLY_REF).arxiv_id == "2609.07652"
+    assert extract_reference_metadata(BOOK_REF).arxiv_id == ""
+
+
+def test_lookup_by_arxiv_id_when_there_is_no_doi() -> None:
+    http = FakeHttp({"ARXIV:2511.16198": (200, {"title": "SemanticCite", "abstract": "ARXIV ABS"}, "")})
+    result = ReferenceLookupAdapter(http=http).lookup(pair(ARXIV_REF, 7))
+    assert result.abstract == "ARXIV ABS"
+    assert result.source_status is SourceStatus.GOT_ABSTRACT
+
+
+def test_arxiv_only_reference_is_still_queryable() -> None:
+    """沒有引號篇名、也沒有 DOI，但有 arXiv ID 就還查得到。"""
+
+    meta = extract_reference_metadata(ARXIV_ONLY_REF)
+    assert meta.title == ""
+    assert meta.has_identifier is True
+    http = FakeHttp({"ARXIV:2609.07652": (200, {"title": "RefVerifier", "abstract": "RV ABS"}, "")})
+    result = ReferenceLookupAdapter(http=http).lookup(pair(ARXIV_ONLY_REF, 8))
+    assert result.abstract == "RV ABS"
+
+
+def test_openalex_runs_without_a_key() -> None:
+    """沒有金鑰也要查 OpenAlex，只是會受每日 100 credits 限制。"""
+
+    http = FakeHttp({ISIK: (200, {"results": [{"display_name": ISIK,
+                                               "abstract_inverted_index": {"No": [0], "key": [1]}}]}, "")})
+    result = ReferenceLookupAdapter(http=http).lookup(pair(ISIK_REF, 2))
+    assert result.abstract == "No key"
+    assert result.abstract_source == "openalex"
+    assert "沒有 OpenAlex 金鑰" in result.source_note

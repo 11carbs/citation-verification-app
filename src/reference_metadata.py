@@ -13,6 +13,12 @@ _LEADING_NUMBER_RE = re.compile(r"^\s*\[\d+\]\s*")
 _TITLE_RE = re.compile(r"[“\"](.+?)[”\"]")
 _DOI_RE = re.compile(r"\b(10\.\d{4,9}/[^\s\"“”<>]+)", re.IGNORECASE)
 _URL_RE = re.compile(r"https?://[^\s\"“”<>]+", re.IGNORECASE)
+# arXiv:2602.23452 / arXiv:2602.23452v2 / arxiv.org/abs/2602.23452 / 舊式 cs.CL/0112017
+_ARXIV_RE = re.compile(
+    r"(?:arxiv[:\s/]+|arxiv\.org/(?:abs|pdf)/)"
+    r"(?P<id>\d{4}\.\d{4,5}(?:v\d+)?|[a-z-]+(?:\.[A-Z]{2})?/\d{7}(?:v\d+)?)",
+    re.IGNORECASE,
+)
 _URLISH_START_RE = re.compile(
     r"^(https?://|www\.|doi\.org|dx\.doi\.org|10\.\d{4,9}/)", re.IGNORECASE
 )
@@ -26,7 +32,12 @@ class ReferenceMetadata:
     title: str = ""
     doi: str = ""
     url: str = ""
+    arxiv_id: str = ""
     parse_note: str = ""
+
+    @property
+    def has_identifier(self) -> bool:
+        return bool(self.doi or self.arxiv_id)
 
 
 def join_reference_lines(raw: str) -> str:
@@ -65,10 +76,18 @@ def extract_reference_metadata(ref_raw: str) -> ReferenceMetadata:
     title_match = _TITLE_RE.search(body)
     doi_match = _DOI_RE.search(body)
     url_match = _URL_RE.search(body)
+    arxiv_match = _ARXIV_RE.search(body)
     title = _clean(title_match.group(1)) if title_match else ""
+    arxiv_id = _clean(arxiv_match.group("id")) if arxiv_match else ""
+    notes = []
+    if not title:
+        notes.append("抓不到引號內的篇名（可能是書籍、標準或格式不符）")
+    if arxiv_id:
+        notes.append(f"抓到 arXiv ID {arxiv_id}")
     return ReferenceMetadata(
         title=title,
         doi=_clean(doi_match.group(1)).lower() if doi_match else "",
         url=_clean(url_match.group(0)) if url_match else "",
-        parse_note="" if title else "抓不到引號內的篇名（可能是書籍、標準或格式不符）",
+        arxiv_id=arxiv_id,
+        parse_note="；".join(notes),
     )

@@ -1,15 +1,17 @@
 """第二人：文獻查詢與摘要取得，實作 ``ReferenceLookupAdapter``.
 
-查詢順序：Semantic Scholar 用 DOI → Semantic Scholar 用篇名 → OpenAlex（DOI、篇名）。
+查詢順序：Semantic Scholar 用 DOI → arXiv ID → 篇名 → OpenAlex（DOI、篇名）。
 
 來源狀態：
 - 拿到摘要：找到這篇且有摘要
 - 有文獻但沒摘要：找到這篇但資料庫沒提供摘要
-- 查不到：都找不到、ref 沒有 DOI 也沒有篇名，或連線失敗（說明欄會註明）
+- 查不到：兩邊都查無，或 ref 沒有 DOI、arXiv ID 也沒有篇名
+- 查詢失敗：過程中被限流或連不上，沒有查成功。這不代表文獻不存在
 
-金鑰都可省略：
-- Semantic Scholar 不給金鑰也能用，但容易被限流（HTTP 429）
-- OpenAlex 自 2026-02-13 起需要金鑰，沒給就略過備用查詢
+金鑰都可省略，但都建議給：
+- Semantic Scholar 不給金鑰也能用，容易被限流（HTTP 429）
+- OpenAlex 自 2026-02-13 起改為金鑰制，polite pool 已退場。沒有金鑰每天只有
+  100 credits，超過就會被擋；免費金鑰可拉到 100,000。沒給金鑰仍會嘗試查詢
 
 在 app.py 裡用法：
     ReferenceLookupAdapter(
@@ -34,6 +36,7 @@ from src.schemas import CitationPair, SourceStatus
 S2_BASE = "https://api.semanticscholar.org/graph/v1"
 OPENALEX_BASE = "https://api.openalex.org"
 S2_FIELDS = "title,abstract,externalIds"
+S2_ARXIV_PREFIX = "ARXIV:"
 OPENALEX_SELECT = "id,doi,display_name,abstract_inverted_index"
 
 TITLE_MATCH = 0.90  # 用篇名查到的論文，篇名相似度要到這個門檻才算同一篇
@@ -117,10 +120,29 @@ class _Lookup:
     # ---- result helpers ----
     def _result(self, status: SourceStatus, abstract: str = "", source: str = "") -> dict:
         if status is SourceStatus.NOT_FOUND and self.had_error:
-            self.notes.append("過程中有連線或限流錯誤，查不到不代表文獻不存在")
+            # 沒查成功 ≠ 文獻不存在，評估時這兩種不能混在一起算
+            self.notes.append("過程中有連線或限流錯誤，沒有查成功，不代表文獻不存在")
+            status = SourceStatus.LOOKUP_FAILED
         return {"source_status": status, "abstract": abstract, "abstract_source": source}
 
     # ---- Semantic Scholar ----
+    def s2_by_arxiv(self) -> dict | None:
+        code, paper, error = self.http.get(
+            f"{S2_BASE}/paper/{S2_ARXIV_PREFIX}{self.meta.arxiv_id}", {"fields": S2_FIELDS}, self.s2_headers
+        )
+        if code == 200 and paper:
+            if paper.get("abstract"):
+                self.notes.append("Semantic Scholar 用 arXiv ID 找到")
+                return self._result(SourceStatus.GOT_ABSTRACT, paper["abstract"], "semantic_scholar")
+            self.found_without_abstract = True
+            self.notes.append("Semantic Scholar 用 arXiv ID 找到文獻，但沒有摘要")
+        elif code == 404:
+            self.notes.append("Semantic Scholar 查無此 arXiv ID")
+        else:
+            self.had_error = True
+            self.notes.append(f"Semantic Scholar arXiv 查詢失敗（{error}）")
+        return None
+
     def s2_by_doi(self) -> dict | None:
         code, paper, error = self.http.get(
             f"{S2_BASE}/paper/DOI:{self.meta.doi}", {"fields": S2_FIELDS}, self.s2_headers
@@ -169,15 +191,15 @@ class _Lookup:
     # ---- OpenAlex ----
     def openalex(self) -> dict | None:
         if not self.openalex_key:
-            self.notes.append("未設定 OpenAlex 金鑰，略過備用查詢")
-            return None
+            self.notes.append("沒有 OpenAlex 金鑰，仍嘗試查詢（每日 100 credits 上限）")
+        key = {"api_key": self.openalex_key} if self.openalex_key else {}
         attempts = []
         if self.meta.doi:
             attempts.append(("DOI", f"{OPENALEX_BASE}/works/doi:{self.meta.doi}",
-                             {"api_key": self.openalex_key, "select": OPENALEX_SELECT}))
+                             {**key, "select": OPENALEX_SELECT}))
         if self.meta.title:
             attempts.append(("篇名", f"{OPENALEX_BASE}/works",
-                             {"api_key": self.openalex_key, "search": self.meta.title,
+                             {**key, "search": self.meta.title,
                               "per_page": 5, "select": OPENALEX_SELECT}))
         for how, url, params in attempts:
             code, data, error = self.http.get(url, params)
@@ -209,12 +231,14 @@ class _Lookup:
         return None
 
     def run(self) -> dict:
-        if not self.meta.doi and not self.meta.title:
-            self.notes.append("ref 裡沒有 DOI，也抓不到篇名，無法查詢")
+        if not self.meta.has_identifier and not self.meta.title:
+            self.notes.append("ref 裡沒有 DOI、arXiv ID，也抓不到篇名，無法查詢")
             return self._result(SourceStatus.NOT_FOUND)
         steps = []
         if self.meta.doi:
             steps.append(self.s2_by_doi)
+        if self.meta.arxiv_id:
+            steps.append(lambda: None if self.found_without_abstract else self.s2_by_arxiv())
         steps.append(lambda: None if (self.found_without_abstract or not self.meta.title) else self.s2_by_title())
         steps.append(self.openalex)
         for step in steps:
@@ -256,7 +280,9 @@ class ReferenceLookupAdapter:
             url=meta.url,
             abstract=found["abstract"],
             source_status=status,
-            error_message="；".join(notes) if status is SourceStatus.NOT_FOUND else "",
+            error_message="；".join(notes)
+            if status in (SourceStatus.NOT_FOUND, SourceStatus.LOOKUP_FAILED)
+            else "",
             source_note="；".join(notes),
             abstract_source=found["abstract_source"],
         )
