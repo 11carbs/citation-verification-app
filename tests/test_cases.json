@@ -1,5 +1,5 @@
 {
-  "version": "2026-11-22",
+  "version": "2026-11-22b",
   "spec_source": "汪老師 2026-11-17 meeting：輸入＝欲比對的段落＋ref，限定 IEEE 格式，使用者自己貼上",
   "ground_truth_scope": "只有解析層（ref 編號、配對數、缺少 ref、未被引用 ref）有正確答案。支持層級不標註——汪老師明確說不要人工標註（2026-11-22 LJH 轉述）。11/17 紀錄的「比較兩者效能」指的是同一批輸入下，方法 A（Jev）與方法 B（一般 LLM）各自輸出的支持分數互相對照，不是跟人工正確答案比對。",
   "cases": [
@@ -155,82 +155,80 @@
     },
     {
       "id": "case5-missing",
-      "source": "合成（非真實論文）",
-      "is_real_ieee": false,
-      "paragraph": "Prior work established the baseline accuracy of automated reference checking [3], and a later replication reported substantially lower precision on non-English corpora [91].",
-      "references": "[3] A. Author and B. Writer, \"Automated reference checking at scale,\" IEEE Trans. Knowl. Data Eng., vol. 12, no. 3, pp. 45-60, 2024.",
+      "source": "paper-reading/paper-temp-storage/Security_of_Internet_of_Agents_Attacks_and_Countermeasures.pdf（IEEE 期刊，排版用 “…” 彎引號）：Related Work，ref 清單故意只貼一部分",
+      "is_real_ieee": true,
+      "ref_style": "嚴格 IEEE：“…”",
+      "paragraph": "Das\net al. [12] provide an in-depth survey of security and privacy\nvulnerabilities in LLMs, evaluating domain-specific risks and\ndefenses across transportation, education, and healthcare. He\net al. [13] categorize emerging threats to LLM-driven agents,\nillustrates their real-world impacts, and reviews prevailing\nmitigation techniques. Wang et al. [14] examine attack vectors\nat five critical stages: pre-training, fine-tuning, retrievalaugmented generation (RAG), deployment, and in-agent operation, as well as tailored countermeasures.",
+      "references": "[12] B. C. Das, M. H. Amini, and Y. Wu, “Security and privacy challenges of large language models: A survey,” ACM Comput. Surveys, vol. 57, no. 6, 2025.\n[13] F. He, T. Zhu, D. Ye, B. Liu, W. Zhou, and P. S. Yu, “The emerged security and privacy of LLM agent: A survey with case studies,” 2024, arXiv:2407.19354.",
       "expected": {
-        "pair_count": 2,
+        "pair_count": 3,
         "ref_numbers": [
-          3,
-          91
+          12,
+          13,
+          14
         ],
         "matched": [
-          3
+          12,
+          13
         ],
         "missing_reference": [
-          91
+          14
         ],
         "uncited_refs": [],
-        "sentence_count": 1,
-        "compound_ref_numbers": [
-          3,
-          91
-        ]
+        "compound_ref_numbers": [],
+        "claim_must_contain": {
+          "12": "in-depth survey",
+          "14": "five critical stages"
+        }
       },
       "traps": [
-        "[91] 內文有、ref 清單沒有，必須輸出 ReferenceMatchStatus.MISSING_REFERENCE",
-        "不可把 missing_reference 算成「不支持」——取不到來源與內容不支持要分開計數"
+        "[14] 內文有、ref 清單沒有，必須輸出 MISSING_REFERENCE",
+        "不可把 missing_reference 算成「不支持」",
+        "「Das\\net al. [12]」跨行，且 al. 不可當句尾"
       ],
-      "notes": "對應汪老師 11/3 標準：取不到來源不是幻覺。評估的 confusion matrix 需要獨立類別。",
-      "ref_style": "嚴格 IEEE：篇名加引號（合成）"
+      "notes": "11/17 定的輸入是使用者自己貼，只貼部分 ref 是真實會發生的。段落與 ref 皆取自真論文，非合成。"
     },
     {
       "id": "case6-pdfnoise",
-      "source": "合成（case3 經 pdftotext 實際抽出的樣子）",
-      "is_real_ieee": false,
-      "paragraph": "Commercial citation auditors such as\nCitely [9], SwanRef [26], CiteCheck [8], and RefCheck-AI [20] report only a binary Real-or-Fake\nlabel [30], and academic auditors such as CiteAudit [24] query multiple bibliographic APIs but still\nemit the same binary verdict.",
-      "references": "[20] RefCheck-AI. RefCheck-AI. https://github.com/HuaHenry/RefCheck_ai, 2024. Accessed: 2026-04. 10\n[24] Kaiwen Shi, Weixiang Sun, Zheyuan Zhang, Lichao Sun, Nitesh V Chawla, and Yanfang Ye. Citeaudit: You cited it, but did you read it? a benchmark for verifying scientific references in the llm era. arXiv preprint arXiv:2602.23452, 2026.\n[30] L. J. Janse van Rensburg. Ai-powered citation auditing: A zero-assumption protocol for systematic reference verification in academic research, 2025.",
+      "source": "paper-reading/paper-temp-storage/Security_of_Internet_of_Agents_Attacks_and_Countermeasures.pdf（IEEE 期刊，排版用 “…” 彎引號）：協定段，ref 為 pdftotext 原始輸出含頁尾雜訊",
+      "is_real_ieee": true,
+      "ref_style": "嚴格 IEEE：“…”",
+      "paragraph": "Standardized agent communication protocols are key enablers\nfor the IoA to facilitate seamless interaction, coordination,\nand secure interoperability among heterogeneous agents [22],\n[23], [24], [25]. Recently, the following representative protocols are developed to support structured messaging, identity\nverification, and tool integration within distributed agent\necosystems.",
+      "references": "[22] Anthropic, “Model context protocol (MCP),” Accessed: Jan. 2024.\n[Online] Available: \"https://www.anthropic.com/news/model-contextprotocol\"\n\nVOLUME 6, 2025\n\n[23] Google, “Agent to agent protocol (A2A),” Accessed: Apr. 2025. [Online]. Available: https://google.github.io/A2A\n[24] “Agent network protocol (ANP),” 2024, Accessed: Jan. 20, 2025. [Online] Available:https://agentnetworkprotocol.com/en/\n[25] E. A. University of Oxford, “Agora protocol,” Accessed: Apr. 26, 2025.\n[Online] Available: https://agoraprotocol.org",
       "expected": {
-        "pair_count": 6,
+        "pair_count": 4,
         "ref_numbers": [
-          9,
-          26,
-          8,
-          20,
-          30,
-          24
-        ],
-        "matched": [
-          20,
+          22,
+          23,
           24,
-          30
+          25
         ],
-        "missing_reference": [
-          8,
-          9,
-          26
-        ],
-        "uncited_refs": [],
-        "sentence_count": 1,
-        "claim_must_contain": "Commercial citation auditors",
         "compound_ref_numbers": [
-          8,
-          9,
-          20,
+          22,
+          23,
           24,
-          26,
-          30
-        ]
+          25
+        ],
+        "claim_must_contain": {
+          "22": "Standardized agent communication protocols"
+        },
+        "matched": [
+          22,
+          23,
+          24,
+          25
+        ],
+        "missing_reference": [],
+        "uncited_refs": []
       },
-      "expected_to_fail_before_patch_0001": true,
       "traps": [
-        "硬換行必須接回同一句，不可截斷（patch 0001）",
-        "[20] 的 ref 尾巴黏了頁碼 10，篇名抽取要能容忍",
-        "真實 PDF 的 URL 會被空白切斷成 https:// gptzero.me/...，DOI／URL 抽取要處理"
+        "ref 清單中間夾了頁尾「VOLUME 6, 2025」",
+        "[Online] Available: 是續行，不可誤判成新的 ref",
+        "[22] 的網址被 PDF 換行吃掉連字號（model-contextprotocol）",
+        "引用標記 [22],\\n[23], [24], [25] 跨行",
+        "[22] 的篇名是「Model context protocol (MCP)」，右括號是篇名的一部分，不可跟結尾逗號一起砍掉"
       ],
-      "notes": "預期失敗，且應該失敗。標示的是「使用者從 PDF 複製」情境下的實際韌性，當待改進清單用。 ⚠️ 2026-11-22 更正：原本標為 is_real_ieee=true，實際核對原論文後確認這篇用的不是 IEEE 格式。段落與引用編號仍是真實的，可用於配對層測試，但不可用來代表 IEEE 格式的 ref。",
-      "ref_style": "plain／ACM 式：作者在前、篇名不加引號。方括號編號相同，但不是 IEEE 格式"
+      "notes": "全部是 pdftotext 實際抽出的原樣，沒有人工加工。"
     },
     {
       "id": "case7-redaction-relatedwork",
@@ -357,6 +355,43 @@
         "第一句沒有引用編號，不可產生查核項目"
       ],
       "notes": "這段是對被引文獻「效能特性」的主張，要驗證得讀被引文獻的實驗節。"
+    },
+    {
+      "id": "case11-ioa-relatedwork",
+      "source": "paper-reading/paper-temp-storage/Security_of_Internet_of_Agents_Attacks_and_Countermeasures.pdf（IEEE 期刊，排版用 “…” 彎引號）：Related Work 全段",
+      "is_real_ieee": true,
+      "ref_style": "嚴格 IEEE：“…”",
+      "paragraph": "Das\net al. [12] provide an in-depth survey of security and privacy\nvulnerabilities in LLMs, evaluating domain-specific risks and\ndefenses across transportation, education, and healthcare. He\net al. [13] categorize emerging threats to LLM-driven agents,\nillustrates their real-world impacts, and reviews prevailing\nmitigation techniques. Wang et al. [14] examine attack vectors\nat five critical stages: pre-training, fine-tuning, retrievalaugmented generation (RAG), deployment, and in-agent operation, as well as tailored countermeasures. Gan et al. [15]\nintroduce a two-axis taxonomy of security challenges in LLM\nagents by threat source and impact, and analyze representative\nagent implementations as case studies. Li et al. [16] outline the architecture and optimization workflows of personal\nLLM agents, highlighting associated security and privacy concerns.",
+      "references": "[12] B. C. Das, M. H. Amini, and Y. Wu, “Security and privacy challenges of large language models: A survey,” ACM Comput. Surveys, vol. 57, no. 6, 2025.\n[13] F. He, T. Zhu, D. Ye, B. Liu, W. Zhou, and P. S. Yu, “The emerged security and privacy of LLM agent: A survey with case studies,” 2024, arXiv:2407.19354.\n[14] S. Wang et al., “Unique security and privacy threats of large language model: A comprehensive survey,” 2024, arXiv:2406.07973.\n[15] Y. Gan et al., “Navigating the risks: A survey of security, privacy, and ethics threats in LLM-based agents,” 2024, arXiv:2411.09523.\n[16] Y. Li et al., “Personal LLM agents: Insights and survey about the capability, efficiency and security,” 2024, arXiv:2401.05459.",
+      "expected": {
+        "pair_count": 5,
+        "ref_numbers": [
+          12,
+          13,
+          14,
+          15,
+          16
+        ],
+        "matched": [
+          12,
+          13,
+          14,
+          15,
+          16
+        ],
+        "missing_reference": [],
+        "uncited_refs": [],
+        "compound_ref_numbers": [],
+        "claim_must_contain": {
+          "15": "two-axis taxonomy",
+          "16": "personal"
+        }
+      },
+      "traps": [
+        "五個作者名後面都有 et al.，都不可當句尾",
+        "每句各一個引用，全部不是複合引用"
+      ],
+      "notes": "每一句都對被引文獻做了具體主張（in-depth survey、two-axis taxonomy…），是最適合做內容查證的一筆。"
     }
   ],
   "comparison_design": "同一批段落＋ref 同時丟給方法 A 與方法 B，比較兩者的支持分數與證據層級。沒有 ground truth，所以測得出兩方法「一不一致」，測不出「誰對」。"
