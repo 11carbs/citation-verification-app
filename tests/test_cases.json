@@ -1,5 +1,5 @@
 {
-  "version": "2026-11-22c",
+  "version": "2026-11-22d",
   "spec_source": "汪老師 2026-11-17 meeting：輸入＝欲比對的段落＋ref，限定 IEEE 格式，使用者自己貼上",
   "ground_truth_scope": "只有解析層（ref 編號、配對數、缺少 ref、未被引用 ref）有正確答案。支持層級不標註——汪老師明確說不要人工標註（2026-11-22 LJH 轉述）。11/17 紀錄的「比較兩者效能」指的是同一批輸入下，方法 A（Jev）與方法 B（一般 LLM）各自輸出的支持分數互相對照，不是跟人工正確答案比對。",
   "cases": [
@@ -28,7 +28,9 @@
         "原文跨行：從 PDF 複製會在 'FIDO2/WebAuthn' 後產生硬換行，未修版 parser 會把引用句截成只剩 'standards [79].'（patch 0001 的回歸測試）"
       ],
       "notes": "篇名是 device onboarding，主張是 password-free authentication，屬灰色地帶，適合測「不確定」級，但正確答案需人工定。 被引來源是 W3C 規格與 FIDO Alliance 網頁，索引裡沒有摘要（2026-11-22 實測）。",
-      "ref_style": "嚴格 IEEE：篇名加引號"
+      "ref_style": "嚴格 IEEE：篇名加引號",
+      "source_key": "wang_meeting",
+      "source_citation": "汪老師 2026-11-17 meeting 提供的舉例"
     },
     {
       "id": "case2-w3c",
@@ -67,7 +69,9 @@
         "ref 清單含未被引用的 [108]，不可配對給任何引用"
       ],
       "notes": "已是 repo mock_data.py 的 MOCK_CLAIM / MOCK_REFERENCES 預設值。 被引來源是 W3C 規格與 FIDO Alliance 網頁，索引裡沒有摘要（2026-11-22 實測）。",
-      "ref_style": "嚴格 IEEE：篇名加引號"
+      "ref_style": "嚴格 IEEE：篇名加引號",
+      "source_key": "wang_meeting",
+      "source_citation": "汪老師 2026-11-17 meeting 提供的舉例"
     },
     {
       "id": "case3-auditors",
@@ -114,7 +118,9 @@
         "[24] 的 ref 含問號 'did you read it?'，測句尾判斷不會誤切"
       ],
       "notes": "支持層級需人工讀被引文獻後標註。 ⚠️ 2026-11-22 更正：原本標為 is_real_ieee=true，實際核對原論文後確認這篇用的不是 IEEE 格式。段落與引用編號仍是真實的，可用於配對層測試，但不可用來代表 IEEE 格式的 ref。",
-      "ref_style": "plain／ACM 式：作者在前、篇名不加引號。方括號編號相同，但不是 IEEE 格式"
+      "ref_style": "plain／ACM 式：作者在前、篇名不加引號。方括號編號相同，但不是 IEEE 格式",
+      "source_key": "multiagent",
+      "source_citation": "M. Li, Z. Lin, and S. Ma, “Source or it didn’t happen: A multi-agent framework for citation hallucination detection,” arXiv:2605.08583, 2026."
     },
     {
       "id": "case4-venues",
@@ -151,7 +157,9 @@
         "三個子句用分號串接而非句號，測拆句不會誤把分號當句尾"
       ],
       "notes": "最重要的一筆。若 parser 只認各自獨立方括號，[12, 27] 會整個漏掉或被當成不存在的編號。 ⚠️ 2026-11-22 更正：原本標為 is_real_ieee=true，實際核對原論文後確認這篇用的不是 IEEE 格式。段落與引用編號仍是真實的，可用於配對層測試，但不可用來代表 IEEE 格式的 ref。",
-      "ref_style": "plain／ACM 式：作者在前、篇名不加引號。方括號編號相同，但不是 IEEE 格式"
+      "ref_style": "plain／ACM 式：作者在前、篇名不加引號。方括號編號相同，但不是 IEEE 格式",
+      "source_key": "multiagent",
+      "source_citation": "M. Li, Z. Lin, and S. Ma, “Source or it didn’t happen: A multi-agent framework for citation hallucination detection,” arXiv:2605.08583, 2026."
     },
     {
       "id": "case5-missing",
@@ -186,7 +194,9 @@
         "不可把 missing_reference 算成「不支持」",
         "「Das\\net al. [12]」跨行，且 al. 不可當句尾"
       ],
-      "notes": "11/17 定的輸入是使用者自己貼，只貼部分 ref 是真實會發生的。段落與 ref 皆取自真論文，非合成。"
+      "notes": "11/17 定的輸入是使用者自己貼，只貼部分 ref 是真實會發生的。段落與 ref 皆取自真論文，非合成。",
+      "source_key": "ioa",
+      "source_citation": "Y. Wang, Y. Pan, S. Guo, and Z. Su, “Security of Internet of Agents: Attacks and countermeasures,” IEEE Open J. Comput. Soc., 2025, doi: 10.1109/OJCS.2025.3589638."
     },
     {
       "id": "case6-pdfnoise",
@@ -228,7 +238,9 @@
         "引用標記 [22],\\n[23], [24], [25] 跨行",
         "[22] 的篇名是「Model context protocol (MCP)」，右括號是篇名的一部分，不可跟結尾逗號一起砍掉"
       ],
-      "notes": "全部是 pdftotext 實際抽出的原樣，沒有人工加工。"
+      "notes": "全部是 pdftotext 實際抽出的原樣，沒有人工加工。",
+      "source_key": "ioa",
+      "source_citation": "Y. Wang, Y. Pan, S. Guo, and Z. Su, “Security of Internet of Agents: Attacks and countermeasures,” IEEE Open J. Comput. Soc., 2025, doi: 10.1109/OJCS.2025.3589638."
     },
     {
       "id": "case7-redaction-relatedwork",
@@ -262,7 +274,9 @@
         "「… sector. In [27],」句號後接大寫 In，是真的句尾，要切開",
         "同一篇論文混用兩種引號，篇名都要抽得到"
       ],
-      "notes": "著者對 [21][27][28] 的描述具體（trapdoor hash、distributed trapdoor recovery、two-level rewriting），適合做內容查證的正確答案標註。"
+      "notes": "著者對 [21][27][28] 的描述具體（trapdoor hash、distributed trapdoor recovery、two-level rewriting），適合做內容查證的正確答案標註。",
+      "source_key": "ekyc",
+      "source_citation": "S. Fugkeaw, S. Sungchai, S. Nakprame, and P. Sreekongpan, “Enabling secure and scalable GDPR-compliant blockchain-based e-KYC with efficient redaction,” IEEE Access, 2025, doi: 10.1109/ACCESS.2025.3594656."
     },
     {
       "id": "case8-zksnark",
@@ -290,7 +304,9 @@
         "第一句沒有引用，不可產生查核項目",
         "被引文獻篇名是 Decentralised Redactable Blockchain，沒有 zk-SNARK 字樣——篇名判斷會很吃力"
       ],
-      "notes": "篇名不含 zk-SNARK，但內容應該有。適合用來測「篇名不相關就停止」這條規則會不會誤殺。"
+      "notes": "篇名不含 zk-SNARK，但內容應該有。適合用來測「篇名不相關就停止」這條規則會不會誤殺。",
+      "source_key": "ekyc",
+      "source_citation": "S. Fugkeaw, S. Sungchai, S. Nakprame, and P. Sreekongpan, “Enabling secure and scalable GDPR-compliant blockchain-based e-KYC with efficient redaction,” IEEE Access, 2025, doi: 10.1109/ACCESS.2025.3594656."
     },
     {
       "id": "case9-ipfs",
@@ -321,7 +337,9 @@
         "「Yeh et al.\\n[14]」引用編號被硬換行切到下一行",
         "「GDPR-\\ncompliant」行尾連字號必須接回去，不可變成 GDPR- compliant"
       ],
-      "notes": "這是從 PDF 直接複製的原始換行，包含行尾連字號。"
+      "notes": "這是從 PDF 直接複製的原始換行，包含行尾連字號。",
+      "source_key": "ekyc",
+      "source_citation": "S. Fugkeaw, S. Sungchai, S. Nakprame, and P. Sreekongpan, “Enabling secure and scalable GDPR-compliant blockchain-based e-KYC with efficient redaction,” IEEE Access, 2025, doi: 10.1109/ACCESS.2025.3594656."
     },
     {
       "id": "case10-performance",
@@ -354,7 +372,9 @@
         "「Figs.」後面的句號不可當句尾",
         "第一句沒有引用編號，不可產生查核項目"
       ],
-      "notes": "這段是對被引文獻「效能特性」的主張，要驗證得讀被引文獻的實驗節。"
+      "notes": "這段是對被引文獻「效能特性」的主張，要驗證得讀被引文獻的實驗節。",
+      "source_key": "ekyc",
+      "source_citation": "S. Fugkeaw, S. Sungchai, S. Nakprame, and P. Sreekongpan, “Enabling secure and scalable GDPR-compliant blockchain-based e-KYC with efficient redaction,” IEEE Access, 2025, doi: 10.1109/ACCESS.2025.3594656."
     },
     {
       "id": "case11-ioa-relatedwork",
@@ -391,7 +411,9 @@
         "五個作者名後面都有 et al.，都不可當句尾",
         "每句各一個引用，全部不是複合引用"
       ],
-      "notes": "每一句都對被引文獻做了具體主張（in-depth survey、two-axis taxonomy…），是最適合做內容查證的一筆。"
+      "notes": "每一句都對被引文獻做了具體主張（in-depth survey、two-axis taxonomy…），是最適合做內容查證的一筆。",
+      "source_key": "ioa",
+      "source_citation": "Y. Wang, Y. Pan, S. Guo, and Z. Su, “Security of Internet of Agents: Attacks and countermeasures,” IEEE Open J. Comput. Soc., 2025, doi: 10.1109/OJCS.2025.3589638."
     },
     {
       "id": "case12-kyc-relatedwork",
@@ -428,8 +450,59 @@
         "[18] 的篇名被 PDF 換行吃掉連字號：KYCbased（原為 KYC-based）",
         "段落中有兩句沒有引用編號，不可產生查核項目"
       ],
-      "notes": "「The proposed system was tested in private blockchain scenarios using Polygon」這句講的是 [18] 的系統，但句子本身沒有引用編號，依老師定的規則會被捨棄。這是方法本身的限制，不是程式錯，但值得記下來。"
+      "notes": "「The proposed system was tested in private blockchain scenarios using Polygon」這句講的是 [18] 的系統，但句子本身沒有引用編號，依老師定的規則會被捨棄。這是方法本身的限制，不是程式錯，但值得記下來。",
+      "source_key": "ethkyc",
+      "source_citation": "C. V. Kumar, P. Selvaprabhu, N. Baska, U. V. Menon, V. B. Kumaravelu, S. Chinnadurai, and F. Ali, “Ethereum blockchain framework enabling banks to know their customers,” IEEE Access, vol. 12, 2024, doi: 10.1109/ACCESS.2024.3427805."
     }
   ],
-  "comparison_design": "同一批段落＋ref 同時丟給方法 A 與方法 B，比較兩者的支持分數與證據層級。沒有 ground truth，所以測得出兩方法「一不一致」，測不出「誰對」。"
+  "comparison_design": "同一批段落＋ref 同時丟給方法 A 與方法 B，比較兩者的支持分數與證據層級。沒有 ground truth，所以測得出兩方法「一不一致」，測不出「誰對」。",
+  "sources": {
+    "ekyc": {
+      "key": "ekyc",
+      "citation": "S. Fugkeaw, S. Sungchai, S. Nakprame, and P. Sreekongpan, “Enabling secure and scalable GDPR-compliant blockchain-based e-KYC with efficient redaction,” IEEE Access, 2025, doi: 10.1109/ACCESS.2025.3594656.",
+      "venue": "IEEE Access",
+      "year": 2025,
+      "doi": "10.1109/ACCESS.2025.3594656",
+      "ref_quote_style": "‘‘…’’（兩個彎單引號）",
+      "file": "~/Desktop/paper-reading/paper-temp-storage/Enabling Secure and Scalable GDPR Compliant Blockchain Basede-KYC WithEfficient Redaction.pdf"
+    },
+    "ioa": {
+      "key": "ioa",
+      "citation": "Y. Wang, Y. Pan, S. Guo, and Z. Su, “Security of Internet of Agents: Attacks and countermeasures,” IEEE Open J. Comput. Soc., 2025, doi: 10.1109/OJCS.2025.3589638.",
+      "venue": "IEEE Open Journal of the Computer Society",
+      "year": 2025,
+      "doi": "10.1109/OJCS.2025.3589638",
+      "ref_quote_style": "“…”（彎雙引號）",
+      "file": "~/Desktop/paper-reading/paper-temp-storage/Security_of_Internet_of_Agents_Attacks_and_Countermeasures.pdf"
+    },
+    "ethkyc": {
+      "key": "ethkyc",
+      "citation": "C. V. Kumar, P. Selvaprabhu, N. Baska, U. V. Menon, V. B. Kumaravelu, S. Chinnadurai, and F. Ali, “Ethereum blockchain framework enabling banks to know their customers,” IEEE Access, vol. 12, 2024, doi: 10.1109/ACCESS.2024.3427805.",
+      "venue": "IEEE Access",
+      "year": 2024,
+      "doi": "10.1109/ACCESS.2024.3427805",
+      "ref_quote_style": "‘‘…’’（兩個彎單引號）",
+      "file": "~/Desktop/paper-reading/paper-temp-storage/Ethereum_Blockchain_Framework_Enabling_Banks_to_Know_Their_Customers.pdf"
+    },
+    "multiagent": {
+      "key": "multiagent",
+      "citation": "M. Li, Z. Lin, and S. Ma, “Source or it didn’t happen: A multi-agent framework for citation hallucination detection,” arXiv:2605.08583, 2026.",
+      "venue": "arXiv preprint",
+      "year": 2026,
+      "doi": "",
+      "arxiv": "2605.08583",
+      "ref_quote_style": "無引號（plain／ACM 式，非 IEEE）",
+      "file": "研方paper/A Multi-Agent Framework for Citation Hallucination Detection.pdf",
+      "note": "參考文獻不是 IEEE 格式，不在老師定的範圍內。保留是因為配對層測試與格式無關。"
+    },
+    "wang_meeting": {
+      "key": "wang_meeting",
+      "citation": "汪老師 2026-11-17 meeting 提供的舉例",
+      "venue": "meeting 紀錄",
+      "year": 2026,
+      "doi": "",
+      "ref_quote_style": "“…”（彎雙引號）",
+      "file": "Obsidian 研方課程/meeting/2026-11-17 meeting後統整.md"
+    }
+  }
 }
