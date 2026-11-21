@@ -1,6 +1,6 @@
 """第二人：文獻查詢與摘要取得，實作 ``ReferenceLookupAdapter``.
 
-查詢順序：Semantic Scholar 用 DOI → arXiv ID → 篇名精確比對 → 篇名關聯查詢 → OpenAlex（DOI、篇名）。
+查詢順序：Semantic Scholar 用 DOI → arXiv ID → 篇名 → OpenAlex（DOI、篇名）。
 
 來源狀態：
 - 拿到摘要：找到這篇且有摘要
@@ -168,42 +168,6 @@ class _Lookup:
             self.notes.append(f"Semantic Scholar DOI 查詢失敗（{error}）")
         return None
 
-    def s2_by_relevance(self) -> dict | None:
-        """search/match 要求篇名幾乎一字不差；PDF 把連字號吃掉時會整個查無。
-
-        例：ref 寫 ``KYCbased``、實際是 ``KYC-based``。改用 relevance search
-        撈回幾筆，再用同一道相似度門檻過濾，不會放寬判斷標準。
-        """
-
-        code, data, error = self.http.get(
-            f"{S2_BASE}/paper/search",
-            {"query": self.meta.title, "fields": S2_FIELDS, "limit": 5},
-            self.s2_headers,
-        )
-        if code != 200:
-            if code != 404:
-                self.had_error = True
-                self.notes.append(f"Semantic Scholar 關聯查詢失敗（{error}）")
-            return None
-        papers = (data or {}).get("data") or []
-        best = max(papers, default=None,
-                   key=lambda w: title_similarity(self.meta.title, w.get("title") or ""))
-        if not best:
-            self.notes.append("Semantic Scholar 關聯查詢無結果")
-            return None
-        similarity = title_similarity(self.meta.title, best.get("title") or "")
-        if similarity < TITLE_MATCH:
-            self.notes.append(
-                f"Semantic Scholar 關聯查詢最接近的篇名不符（相似度 {similarity:.2f}：「{best.get('title')}」）"
-            )
-            return None
-        if best.get("abstract"):
-            self.notes.append(f"Semantic Scholar 關聯查詢找到（相似度 {similarity:.2f}）")
-            return self._result(SourceStatus.GOT_ABSTRACT, best["abstract"], "semantic_scholar")
-        self.found_without_abstract = True
-        self.notes.append(f"Semantic Scholar 關聯查詢找到文獻（相似度 {similarity:.2f}），但沒有摘要")
-        return None
-
     def s2_by_title(self) -> dict | None:
         code, data, error = self.http.get(
             f"{S2_BASE}/paper/search/match", {"query": self.meta.title, "fields": S2_FIELDS}, self.s2_headers
@@ -282,7 +246,6 @@ class _Lookup:
         if self.meta.arxiv_id:
             steps.append(lambda: None if self.found_without_abstract else self.s2_by_arxiv())
         steps.append(lambda: None if (self.found_without_abstract or not self.meta.title) else self.s2_by_title())
-        steps.append(lambda: None if (self.found_without_abstract or not self.meta.title) else self.s2_by_relevance())
         steps.append(self.openalex)
         for step in steps:
             result = step()

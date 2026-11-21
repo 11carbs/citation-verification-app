@@ -278,35 +278,19 @@ def test_empty_match_result_does_not_crash() -> None:
     assert result.source_status is SourceStatus.NOT_FOUND
 
 
-def test_relevance_search_rescues_a_title_whose_hyphen_the_pdf_ate() -> None:
-    """PDF 把 KYC-based 的連字號吃掉，精確比對查不到，關聯查詢救得回來。"""
+def test_a_title_the_pdf_glued_together_is_reported_not_found() -> None:
+    """PDF 把 KYC-based 的連字號吃掉變成 KYCbased。
+
+    實測（2026-11-22，帶 API 金鑰）：
+    - /paper/search/match 查無
+    - /paper/search 用壞掉的篇名 total=0，用正確篇名才找得到
+    所以這種情況查不回來。系統要誠實回報查不到，不可亂配一篇。
+    """
 
     assert extract_reference_metadata(KYC_REF).title == (
         "A decentralized KYCbased approach for microfinance using blockchain technology"
     )
-    http = FakeHttp({
-        "search/match": (200, {"data": []}, ""),
-        "/paper/search": (200, {"data": [
-            {"title": "Something unrelated about microfinance", "abstract": "NOPE"},
-            {"title": KYC_REAL_TITLE, "abstract": "KYC ABS"},
-        ]}, ""),
-    })
-    result = ReferenceLookupAdapter(http=http).lookup(pair(KYC_REF, 18))
-    assert result.abstract == "KYC ABS"
-    assert result.source_status is SourceStatus.GOT_ABSTRACT
-    assert "關聯查詢找到" in result.source_note
-
-
-def test_relevance_search_still_rejects_a_different_paper() -> None:
-    """放寬的是檢索方式，不是判斷標準：相似度門檻照舊擋。"""
-
-    http = FakeHttp({
-        "search/match": (200, {"data": []}, ""),
-        "/paper/search": (200, {"data": [
-            {"title": "A completely different paper about something else",
-             "abstract": "WRONG"},
-        ]}, ""),
-    })
+    http = FakeHttp({"search/match": (200, {"data": []}, "")})
     result = ReferenceLookupAdapter(http=http).lookup(pair(KYC_REF, 18))
     assert result.abstract == ""
-    assert "篇名不符" in result.source_note
+    assert result.source_status is SourceStatus.NOT_FOUND
