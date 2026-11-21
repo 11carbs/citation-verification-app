@@ -14,12 +14,14 @@ from enum import StrEnum
 class SourceStatus(StrEnum):
     """Whether a cited source can currently be verified."""
 
-    VERIFIED = "可確認"
+    GOT_ABSTRACT = "拿到摘要"
+    NO_ABSTRACT = "有文獻但沒摘要"
     NOT_FOUND = "查不到"
+    LOOKUP_FAILED = "查詢失敗"
     PENDING = "待查詢"
 
 
-class EvidenceLevel(StrEnum):
+class EvidenceBasis(StrEnum):
     """The strongest evidence actually used for a judgment."""
 
     TITLE = "篇名"
@@ -75,7 +77,7 @@ class MethodResult:
     """A method's result for one claim-source pair."""
 
     support_score: float | None
-    evidence_level: EvidenceLevel | None
+    evidence_basis: EvidenceBasis | None
     source_status: SourceStatus = SourceStatus.PENDING
 
     def __post_init__(self) -> None:
@@ -109,11 +111,11 @@ class AnalysisRow:
             "ref 配對狀態": self.pair.match_status.value,
             "錯誤狀態": self.pair.error_message,
             "方法 A 支持分數": _score(self.method_a),
-            "方法 A 證據層級": _evidence(self.method_a),
-            "方法 A 暫定分級": _band(self.method_a),
+            "方法 A 判斷依據": _evidence(self.method_a),
+            "方法 A 證據層級": _band(self.method_a),
             "方法 B 支持分數": _score(self.method_b),
-            "方法 B 證據層級": _evidence(self.method_b),
-            "方法 B 暫定分級": _band(self.method_b),
+            "方法 B 判斷依據": _evidence(self.method_b),
+            "方法 B 證據層級": _band(self.method_b),
         }
 
 
@@ -122,9 +124,9 @@ def _score(result: MethodResult | None) -> float | None:
 
 
 def _evidence(result: MethodResult | None) -> str:
-    if result is None or result.evidence_level is None:
+    if result is None or result.evidence_basis is None:
         return ""
-    return result.evidence_level.value
+    return result.evidence_basis.value
 
 
 def _band(result: MethodResult | None) -> str:

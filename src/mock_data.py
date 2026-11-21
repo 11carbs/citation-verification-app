@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.schemas import AnalysisRow, CitationPair, EvidenceLevel, MethodResult, SourceStatus
+from src.schemas import AnalysisRow, CitationPair, EvidenceBasis, MethodResult, SourceStatus
 
 
 MOCK_CLAIM = (
@@ -41,8 +41,8 @@ def mock_analysis_rows() -> list[AnalysisRow]:
         )
         method_a = MethodResult(
             support_score=scores[ref_number],
-            evidence_level=EvidenceLevel.ABSTRACT,
-            source_status=SourceStatus.VERIFIED,
+            evidence_basis=EvidenceBasis.ABSTRACT,
+            source_status=SourceStatus.GOT_ABSTRACT,
         )
         rows.append(AnalysisRow(pair=pair, method_a=method_a, method_b=None))
     return rows

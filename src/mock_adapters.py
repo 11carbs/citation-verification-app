@@ -9,7 +9,7 @@ from src.adapters import (
     ReferenceLookupResult,
     TitleRelevance,
 )
-from src.schemas import CitationPair, EvidenceLevel, SourceStatus
+from src.schemas import CitationPair, EvidenceBasis, SourceStatus
 
 
 _MOCK_SCORES = {47: 0.82, 79: 0.74, 107: 0.80, 109: 0.55, 110: 0.32}
@@ -33,7 +33,7 @@ class MockReferenceLookupAdapter:
             abstract=(
                 f"[MOCK] 摘要資料，僅供測試 ref [{pair.ref_number}] 的串接與畫面。"
             ),
-            source_status=SourceStatus.VERIFIED,
+            source_status=SourceStatus.GOT_ABSTRACT,
         )
 
 
@@ -53,8 +53,8 @@ class MockJevAdapter:
             title_probabilities=probabilities,
             confidence=max(probabilities.values()),
             support_score=score,
-            evidence_level=(
-                EvidenceLevel.ABSTRACT if reference.abstract else EvidenceLevel.TITLE
+            evidence_basis=(
+                EvidenceBasis.ABSTRACT if reference.abstract else EvidenceBasis.TITLE
             ),
         )
 

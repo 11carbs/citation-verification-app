@@ -28,7 +28,7 @@ def run_method_a_pipeline(
         judgment = jev_adapter.judge(pair, reference)
         method_a = MethodResult(
             support_score=judgment.support_score,
-            evidence_level=judgment.evidence_level,
+            evidence_basis=judgment.evidence_basis,
             source_status=reference.source_status,
         )
         rows.append(AnalysisRow(pair=pair, method_a=method_a, method_b=None))
