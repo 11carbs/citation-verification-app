@@ -28,7 +28,8 @@
       "traps": [
         "原文跨行：從 PDF 複製會在 'FIDO2/WebAuthn' 後產生硬換行，未修版 parser 會把引用句截成只剩 'standards [79].'（patch 0001 的回歸測試）"
       ],
-      "notes": "篇名是 device onboarding，主張是 password-free authentication，屬灰色地帶，適合測「不確定」級，但正確答案需人工定。"
+      "notes": "篇名是 device onboarding，主張是 password-free authentication，屬灰色地帶，適合測「不確定」級，但正確答案需人工定。 被引來源是 W3C 規格與 FIDO Alliance 網頁，索引裡沒有摘要（2026-11-22 實測）。",
+      "ref_style": "嚴格 IEEE：篇名加引號"
     },
     {
       "id": "case2-w3c",
@@ -67,12 +68,13 @@
         "一句四個編號，測複合引用拆解",
         "ref 清單含未被引用的 [108]，不可配對給任何引用"
       ],
-      "notes": "已是 repo mock_data.py 的 MOCK_CLAIM / MOCK_REFERENCES 預設值。"
+      "notes": "已是 repo mock_data.py 的 MOCK_CLAIM / MOCK_REFERENCES 預設值。 被引來源是 W3C 規格與 FIDO Alliance 網頁，索引裡沒有摘要（2026-11-22 實測）。",
+      "ref_style": "嚴格 IEEE：篇名加引號"
     },
     {
       "id": "case3-auditors",
       "source": "研方paper/A Multi-Agent Framework for Citation Hallucination Detection.pdf",
-      "is_real_ieee": true,
+      "is_real_ieee": false,
       "paragraph": "Commercial citation auditors such as Citely [9], SwanRef [26], CiteCheck [8], and RefCheck-AI [20] report only a binary Real-or-Fake label [30], and academic auditors such as CiteAudit [24] query multiple bibliographic APIs but still emit the same binary verdict, so the ambiguous middle ground collapses into the same yes/no signal. Open tools such as Hallucinator [25] consult more than ten bibliographic databases in parallel, but key the verdict on title and author and leave venue, year, DOI, pages, and publisher unaudited. GPTZero's hallucination mode [13] does cross-check external sources, but audits only five fields.",
       "references": "[8] CiteCheck. CiteCheck: Ai-powered citation verification. https://citecheck.ai/, 2024. Accessed: 2026-04.\n[9] Citely. Citely: AI citation assistant. https://citely.ai/, 2024. Accessed: 2026-04.\n[13] GPTZero Team. GPTZero: Detecting AI-generated text, 2023.\n[20] RefCheck-AI. RefCheck-AI. https://github.com/HuaHenry/RefCheck_ai, 2024. Accessed: 2026-04.\n[24] Kaiwen Shi, Weixiang Sun, Zheyuan Zhang, Lichao Sun, Nitesh V Chawla, and Yanfang Ye. Citeaudit: You cited it, but did you read it? a benchmark for verifying scientific references in the llm era. arXiv preprint arXiv:2602.23452, 2026.\n[25] Gianluca Stringhini. Hallucinator: A citation hallucination checker. https://github.com/gianlucasb/hallucinator, 2024.\n[26] SwanRef. SwanRef: Reference verification platform. https://www.swanref.org/, 2024. Accessed: 2026-04.\n[30] L. J. Janse van Rensburg. Ai-powered citation auditing: A zero-assumption protocol for systematic reference verification in academic research, 2025.",
       "expected": {
@@ -114,12 +116,13 @@
         "三句八個引用，每個編號緊貼工具名稱，拆句或配對偏移會立刻顯現",
         "[24] 的 ref 含問號 'did you read it?'，測句尾判斷不會誤切"
       ],
-      "notes": "支持層級需人工讀被引文獻後標註。"
+      "notes": "支持層級需人工讀被引文獻後標註。 ⚠️ 2026-11-22 更正：原本標為 is_real_ieee=true，實際核對原論文後確認這篇用的不是 IEEE 格式。段落與引用編號仍是真實的，可用於配對層測試，但不可用來代表 IEEE 格式的 ref。",
+      "ref_style": "plain／ACM 式：作者在前、篇名不加引號。方括號編號相同，但不是 IEEE 格式"
     },
     {
       "id": "case4-venues",
       "source": "研方paper/A Multi-Agent Framework for Citation Hallucination Detection.pdf",
-      "is_real_ieee": true,
+      "is_real_ieee": false,
       "paragraph": "Recent venues documented widespread fabricated references in submitted papers, with third-party tooling flagging dozens of cases per session [12, 27]; ICLR 2026 assembled a desk-reject queue of submissions whose bibliographies contained hallucinated citations [11]; and ACM CCS 2026 published a Transparency Report enumerating the citations its review cycle flagged as AI-fabricated [1].",
       "references": "[1] ACM CCS 2026 Program Committee. Transparency report on AI-generated citations in ACM CCS 2026 submissions. https://github.com/ACM-CCS-2026/Transparency-Report, 2026. Accessed: 2026-05.\n[11] GPTZero. GPTZero finds over 50 hallucinations in ICLR 2026 submissions. https://gptzero.me/news/iclr-2026, 2025.\n[12] GPTZero. GPTZero flags fabricated citations in NeurIPS submissions. https://gptzero.me/news/neurips/, 2025. Accessed: 2026-05.\n[27] The Register. AI conference's papers contaminated by AI hallucinations. https://www.theregister.com/2026/01/22/neurips_papers_contaiminated_ai_hallucinations/, 2026.",
       "expected": {
@@ -151,7 +154,8 @@
         "[12, 27] 是逗號分隔複合引用，和 case2 的 [47], [107] 是不同寫法，IEEE 兩種都合法；目前無任何測試覆蓋",
         "三個子句用分號串接而非句號，測拆句不會誤把分號當句尾"
       ],
-      "notes": "最重要的一筆。若 parser 只認各自獨立方括號，[12, 27] 會整個漏掉或被當成不存在的編號。"
+      "notes": "最重要的一筆。若 parser 只認各自獨立方括號，[12, 27] 會整個漏掉或被當成不存在的編號。 ⚠️ 2026-11-22 更正：原本標為 is_real_ieee=true，實際核對原論文後確認這篇用的不是 IEEE 格式。段落與引用編號仍是真實的，可用於配對層測試，但不可用來代表 IEEE 格式的 ref。",
+      "ref_style": "plain／ACM 式：作者在前、篇名不加引號。方括號編號相同，但不是 IEEE 格式"
     },
     {
       "id": "case5-missing",
@@ -183,7 +187,8 @@
         "[91] 內文有、ref 清單沒有，必須輸出 ReferenceMatchStatus.MISSING_REFERENCE",
         "不可把 missing_reference 算成「不支持」——取不到來源與內容不支持要分開計數"
       ],
-      "notes": "對應汪老師 11/3 標準：取不到來源不是幻覺。評估的 confusion matrix 需要獨立類別。"
+      "notes": "對應汪老師 11/3 標準：取不到來源不是幻覺。評估的 confusion matrix 需要獨立類別。",
+      "ref_style": "嚴格 IEEE：篇名加引號（合成）"
     },
     {
       "id": "case6-pdfnoise",
@@ -230,7 +235,8 @@
         "[20] 的 ref 尾巴黏了頁碼 10，篇名抽取要能容忍",
         "真實 PDF 的 URL 會被空白切斷成 https:// gptzero.me/...，DOI／URL 抽取要處理"
       ],
-      "notes": "預期失敗，且應該失敗。標示的是「使用者從 PDF 複製」情境下的實際韌性，當待改進清單用。"
+      "notes": "預期失敗，且應該失敗。標示的是「使用者從 PDF 複製」情境下的實際韌性，當待改進清單用。 ⚠️ 2026-11-22 更正：原本標為 is_real_ieee=true，實際核對原論文後確認這篇用的不是 IEEE 格式。段落與引用編號仍是真實的，可用於配對層測試，但不可用來代表 IEEE 格式的 ref。",
+      "ref_style": "plain／ACM 式：作者在前、篇名不加引號。方括號編號相同，但不是 IEEE 格式"
     }
   ]
 }
