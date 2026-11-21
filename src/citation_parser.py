@@ -50,7 +50,14 @@ _BRACKET_GROUP_RE = re.compile(
     r"(?:\s*[,;]\s*\d+(?:\s*[-–—]\s*\d+)?)*"
     r")\s*\]"
 )
-_SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?。！？])\s+|\n+")
+_SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?。！？])\s+")
+_PARAGRAPH_BREAK_RE = re.compile(r"\n[ \t]*\n")
+_LINE_HYPHEN_RE = re.compile(r"-[ \t]*\n[ \t]*(?=[a-z])")
+# A period after these words does not end a sentence.
+_ABBREVIATIONS = {
+    "al", "e.g", "i.e", "etc", "cf", "vs", "fig", "figs", "eq", "eqs", "ref", "refs",
+    "sec", "ch", "no", "vol", "pp", "approx", "resp", "dr", "prof",
+}
 _PART_RE = re.compile(r"^(?P<start>\d+)(?:\s*[-–—]\s*(?P<end>\d+))?$")
 _MAX_EXPANDED_RANGE = 500
 
@@ -139,16 +146,38 @@ def extract_claim_citations(text: str) -> list[ClaimCitations]:
 
 
 def _split_claim_segments(text: str) -> list[str]:
+    """Split into sentence-like segments.
+
+    Single line breaks (from copying a PDF) are joined back into one line;
+    only blank lines are paragraph breaks. A period after an abbreviation
+    (et al., e.g., Fig.), an initial, or before a lowercase word or a
+    citation bracket does not end a sentence.
+    """
+
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    normalized = _LINE_HYPHEN_RE.sub("-", normalized)
     segments: list[str] = []
-    start = 0
-    for boundary in _SENTENCE_BOUNDARY_RE.finditer(text):
-        segment = text[start : boundary.start()].strip()
-        if segment:
-            segments.append(segment)
-        start = boundary.end()
-    final_segment = text[start:].strip()
-    if final_segment:
-        segments.append(final_segment)
+    for paragraph in _PARAGRAPH_BREAK_RE.split(normalized):
+        paragraph = " ".join(paragraph.split())
+        start = 0
+        for boundary in _SENTENCE_BOUNDARY_RE.finditer(paragraph):
+            before = paragraph[start : boundary.start()]
+            after = paragraph[boundary.end() : boundary.end() + 1]
+            last_word = before.rsplit(" ", 1)[-1].rstrip(".").lower()
+            if (
+                last_word in _ABBREVIATIONS
+                or (len(last_word) == 1 and last_word.isalpha())
+                or after.islower()
+                or after == "["
+            ):
+                continue
+            segment = paragraph[start : boundary.start()].strip()
+            if segment:
+                segments.append(segment)
+            start = boundary.end()
+        final_segment = paragraph[start:].strip()
+        if final_segment:
+            segments.append(final_segment)
     return segments
 
 

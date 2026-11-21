@@ -56,3 +56,36 @@ def test_rejects_descending_range() -> None:
     with pytest.raises(CitationParseError):
         extract_citation_numbers("Invalid range [9]-[4].")
 
+
+
+def test_pdf_line_breaks_do_not_cut_the_claim() -> None:
+    text = (
+        "Password-Free Authentication and Secure Backup: To enable secure and\n"
+        "password-free authentication, researchers should adopt FIDO2/WebAuthn\n"
+        "standards [79]."
+    )
+    claims = extract_claim_citations(text)
+    assert len(claims) == 1
+    assert claims[0].claim_text.startswith("Password-Free Authentication")
+    assert claims[0].claim_text.endswith("standards [79].")
+
+
+def test_hyphen_at_line_end_is_rejoined() -> None:
+    claims = extract_claim_citations("A privacy-\npreserving scheme was proposed [2].")
+    assert claims[0].claim_text == "A privacy-preserving scheme was proposed [2]."
+
+
+def test_abbreviations_do_not_split_sentences() -> None:
+    claims = extract_claim_citations(
+        "Smith et al. [3] showed fabrication. Tools, e.g. RefChecker [4], check metadata. See Fig. 2 for details [5]."
+    )
+    assert [c.claim_text for c in claims] == [
+        "Smith et al. [3] showed fabrication.",
+        "Tools, e.g. RefChecker [4], check metadata.",
+        "See Fig. 2 for details [5].",
+    ]
+
+
+def test_blank_line_still_separates_paragraphs() -> None:
+    claims = extract_claim_citations("First paragraph [1]\n\nSecond paragraph [2].")
+    assert [c.claim_text for c in claims] == ["First paragraph [1]", "Second paragraph [2]."]
