@@ -1,7 +1,7 @@
 {
-  "version": "2026-11-21",
+  "version": "2026-11-22",
   "spec_source": "汪老師 2026-11-17 meeting：輸入＝欲比對的段落＋ref，限定 IEEE 格式，使用者自己貼上",
-  "ground_truth_scope": "只有解析層（ref 編號、配對數、缺少 ref、未被引用 ref）。支持層級未標註，需人工讀被引文獻後補。",
+  "ground_truth_scope": "只有解析層（ref 編號、配對數、缺少 ref、未被引用 ref）有正確答案。支持層級不標註——汪老師明確說不要人工標註（2026-11-22 LJH 轉述）。11/17 紀錄的「比較兩者效能」指的是同一批輸入下，方法 A（Jev）與方法 B（一般 LLM）各自輸出的支持分數互相對照，不是跟人工正確答案比對。",
   "cases": [
     {
       "id": "case1-fido2",
@@ -23,7 +23,6 @@
         "claim_must_contain": "Password-Free Authentication",
         "compound_ref_numbers": []
       },
-      "support_band": null,
       "expected_to_fail_before_patch_0001": true,
       "traps": [
         "原文跨行：從 PDF 複製會在 'FIDO2/WebAuthn' 後產生硬換行，未修版 parser 會把引用句截成只剩 'standards [79].'（patch 0001 的回歸測試）"
@@ -63,7 +62,6 @@
           110
         ]
       },
-      "support_band": null,
       "traps": [
         "一句四個編號，測複合引用拆解",
         "ref 清單含未被引用的 [108]，不可配對給任何引用"
@@ -111,7 +109,6 @@
           30
         ]
       },
-      "support_band": null,
       "traps": [
         "三句八個引用，每個編號緊貼工具名稱，拆句或配對偏移會立刻顯現",
         "[24] 的 ref 含問號 'did you read it?'，測句尾判斷不會誤切"
@@ -149,7 +146,6 @@
           27
         ]
       },
-      "support_band": null,
       "traps": [
         "[12, 27] 是逗號分隔複合引用，和 case2 的 [47], [107] 是不同寫法，IEEE 兩種都合法；目前無任何測試覆蓋",
         "三個子句用分號串接而非句號，測拆句不會誤把分號當句尾"
@@ -182,7 +178,6 @@
           91
         ]
       },
-      "support_band": null,
       "traps": [
         "[91] 內文有、ref 清單沒有，必須輸出 ReferenceMatchStatus.MISSING_REFERENCE",
         "不可把 missing_reference 算成「不支持」——取不到來源與內容不支持要分開計數"
@@ -228,7 +223,6 @@
           30
         ]
       },
-      "support_band": null,
       "expected_to_fail_before_patch_0001": true,
       "traps": [
         "硬換行必須接回同一句，不可截斷（patch 0001）",
@@ -265,7 +259,6 @@
           "28": "transaction-level"
         }
       },
-      "support_band": null,
       "traps": [
         "「Xu et al. [21]」、「Wang [28] et al.」的 al. 不可當句尾",
         "「… sector. In [27],」句號後接大寫 In，是真的句尾，要切開",
@@ -295,7 +288,6 @@
           "16": "zk-SNARKs"
         }
       },
-      "support_band": null,
       "traps": [
         "第一句沒有引用，不可產生查核項目",
         "被引文獻篇名是 Decentralised Redactable Blockchain，沒有 zk-SNARK 字樣——篇名判斷會很吃力"
@@ -327,7 +319,6 @@
           "17": "EHRs"
         }
       },
-      "support_band": null,
       "traps": [
         "「Yeh et al.\\n[14]」引用編號被硬換行切到下一行",
         "「GDPR-\\ncompliant」行尾連字號必須接回去，不可變成 GDPR- compliant"
@@ -361,12 +352,12 @@
           "13": "elliptic curve cryptography"
         }
       },
-      "support_band": null,
       "traps": [
         "「Figs.」後面的句號不可當句尾",
         "第一句沒有引用編號，不可產生查核項目"
       ],
       "notes": "這段是對被引文獻「效能特性」的主張，要驗證得讀被引文獻的實驗節。"
     }
-  ]
+  ],
+  "comparison_design": "同一批段落＋ref 同時丟給方法 A 與方法 B，比較兩者的支持分數與證據層級。沒有 ground truth，所以測得出兩方法「一不一致」，測不出「誰對」。"
 }
