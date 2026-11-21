@@ -294,3 +294,28 @@ def test_a_title_the_pdf_glued_together_is_reported_not_found() -> None:
     result = ReferenceLookupAdapter(http=http).lookup(pair(KYC_REF, 18))
     assert result.abstract == ""
     assert result.source_status is SourceStatus.NOT_FOUND
+
+
+@pytest.mark.parametrize(
+    ("ref_raw", "expected_url"),
+    [
+        ("[17] LangChain. (2024). Docs. [Online]. Available: http\ns://python.langchain.com/",
+         "https://python.langchain.com/"),
+        ("[1] X. [Online]. Available: https\n://example.org/a/b", "https://example.org/a/b"),
+        ("[2] X. [Online]. Available: htt\nps://example.org/a", "https://example.org/a"),
+        ("[3] X. [Online]. Available: https://example.org/\nfoo", "https://example.org/foo"),
+    ],
+)
+def test_url_broken_inside_its_scheme_is_rejoined(ref_raw: str, expected_url: str) -> None:
+    """PDF 會在 http 和 s:// 中間換行，接回來時不可補空白，否則整個網址抽不到。"""
+
+    assert extract_reference_metadata(ref_raw).url == expected_url
+
+
+def test_scheme_rejoin_does_not_glue_unrelated_lines() -> None:
+    """只有下一行真的接得上 scheme 才黏，一般換行照常補空白。"""
+
+    raw = '[4] A. B, \u201cTitle,\u201d J., 2024.\nSomething else entirely.'
+    meta = extract_reference_metadata(raw)
+    assert meta.url == ""
+    assert meta.title == "Title"

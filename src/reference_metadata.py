@@ -29,6 +29,10 @@ _URLISH_START_RE = re.compile(
 )
 # The next line looks like the rest of a URL: URL characters only, no colon.
 _URLISH_CONT_RE = re.compile(r"^[A-Za-z0-9\-._~/?#=&%+]+(\s|$)")
+# The PDF can break a URL inside its scheme: "... Available: http" + "s://host/…".
+# Joining those with a space loses the whole URL, so rejoin them with nothing.
+_SCHEME_TAIL_RE = re.compile(r"(?:^|\s)(?:h|ht|htt|http|https|https?:|https?:/)$", re.IGNORECASE)
+_SCHEME_HEAD_RE = re.compile(r"^(?:s?://|//|ttps?://|tps?://|ps?://)", re.IGNORECASE)
 _TRAILING = ".,;"
 _CLOSERS = {")": "(", "]": "["}
 
@@ -62,7 +66,8 @@ def join_reference_lines(raw: str) -> str:
             and _URLISH_CONT_RE.match(line)
             and not line[0].isupper()
         )
-        if mid_url or (joined.endswith("-") and line[:1].islower()):
+        split_scheme = bool(_SCHEME_TAIL_RE.search(joined) and _SCHEME_HEAD_RE.match(line))
+        if mid_url or split_scheme or (joined.endswith("-") and line[:1].islower()):
             joined += line
         else:
             joined += " " + line
