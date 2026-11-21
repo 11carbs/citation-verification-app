@@ -17,6 +17,7 @@ class SourceStatus(StrEnum):
     GOT_ABSTRACT = "拿到摘要"
     NO_ABSTRACT = "有文獻但沒摘要"
     NOT_FOUND = "查不到"
+    LOOKUP_FAILED = "查詢失敗"
     PENDING = "待查詢"
 
 

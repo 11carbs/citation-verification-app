@@ -68,3 +68,10 @@ def test_unreachable_source_leaves_score_and_band_blank() -> None:
     assert missing.method_a.source_status is SourceStatus.NOT_FOUND
     assert record["方法 A 支持分數"] is None
     assert record["方法 A 證據層級"] == ""
+
+
+def test_lookup_failure_is_not_the_same_as_not_found() -> None:
+    """被限流或連線失敗，不等於這篇文獻不存在。"""
+
+    assert SourceStatus.LOOKUP_FAILED is not SourceStatus.NOT_FOUND
+    assert SourceStatus.LOOKUP_FAILED.value == "查詢失敗"
