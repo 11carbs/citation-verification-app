@@ -1,5 +1,5 @@
 {
-  "version": "2026-11-22b",
+  "version": "2026-11-22c",
   "spec_source": "汪老師 2026-11-17 meeting：輸入＝欲比對的段落＋ref，限定 IEEE 格式，使用者自己貼上",
   "ground_truth_scope": "只有解析層（ref 編號、配對數、缺少 ref、未被引用 ref）有正確答案。支持層級不標註——汪老師明確說不要人工標註（2026-11-22 LJH 轉述）。11/17 紀錄的「比較兩者效能」指的是同一批輸入下，方法 A（Jev）與方法 B（一般 LLM）各自輸出的支持分數互相對照，不是跟人工正確答案比對。",
   "cases": [
@@ -392,6 +392,43 @@
         "每句各一個引用，全部不是複合引用"
       ],
       "notes": "每一句都對被引文獻做了具體主張（in-depth survey、two-axis taxonomy…），是最適合做內容查證的一筆。"
+    },
+    {
+      "id": "case12-kyc-relatedwork",
+      "source": "paper-reading/paper-temp-storage/Ethereum_Blockchain_Framework_Enabling_Banks_to_Know_Their_Customers.pdf（IEEE Access，排版用 ‘‘…’’）：Related Work",
+      "is_real_ieee": true,
+      "ref_style": "嚴格 IEEE：‘‘…’’",
+      "paragraph": "In work paper [18],\nSai et al. suggested a blockchain KYC system modeled after\nthe microfinance system. The proposed system was tested in\nprivate blockchain scenarios using Polygon, an enormously\ndistributed platform. In an article [19], Norvill et al. proposed\na framework which enables automation and permission\ndocument sharing over the blockchain to streamline the KYC\nprocess.\nIn a research paper [20], Ullah et al. suggested a\nHyperledger Fabric network that optimizes the KYC process.\nIn this model, the customer has complete ownership rights\nof the smart contracts that contain their KYC data in the\ndistributed ledger database. Nevertheless, the work does not\nfocus on the confidentiality and key management factors\nof the KYC process. In this article [21], Karadag et al.\nsuggest the blockchain-based KYC model, which illustrates\nthe transparent sharing of loan allocation data for bank\ncustomers.",
+      "references": "[18] B. D. S. Sai, R. Nikhil, S. Prasad, and N. S. Naik, ‘‘A decentralized KYCbased approach for microfinance using blockchain technology,’’ Cyber Secur. Appl., vol. 1, Dec. 2023, Art. no. 100009.\n[19] R. Norvill, M. Steichen, W. M. Shbair, and R. State, ‘‘Demo: Blockchain for the simplification and automation of KYC result sharing,’’ in Proc. IEEE Int. Conf. Blockchain Cryptocurrency (ICBC), May 2019, pp. 9–10.\n[20] N. Ullah, K. A. Al-Dhlan, and W. M. Al-Rahmi, ‘‘KYC optimization by blockchain based hyperledger fabric network,’’ Cyber Secur. Appl., vol. 1, pp. 1294–1299, Mar. 2021.\n[21] B. Karadag, A. Halim Zaim, and A. Akbulut, ‘‘Blockchain-based KYC model for credit allocation in banking,’’ IEEE Access, vol. 12, pp. 80176–80182, 2024.",
+      "expected": {
+        "pair_count": 4,
+        "ref_numbers": [
+          18,
+          19,
+          20,
+          21
+        ],
+        "matched": [
+          18,
+          19,
+          20,
+          21
+        ],
+        "missing_reference": [],
+        "uncited_refs": [],
+        "compound_ref_numbers": [],
+        "claim_must_contain": {
+          "18": "microfinance",
+          "21": "loan allocation"
+        }
+      },
+      "traps": [
+        "引用在作者名之前：「In work paper [18], Sai et al. suggested…」，與其他 case 的「作者 [n]」語序相反",
+        "Sai / Norvill / Ullah / Karadag 四個 et al. 都不可當句尾",
+        "[18] 的篇名被 PDF 換行吃掉連字號：KYCbased（原為 KYC-based）",
+        "段落中有兩句沒有引用編號，不可產生查核項目"
+      ],
+      "notes": "「The proposed system was tested in private blockchain scenarios using Polygon」這句講的是 [18] 的系統，但句子本身沒有引用編號，依老師定的規則會被捨棄。這是方法本身的限制，不是程式錯，但值得記下來。"
     }
   ],
   "comparison_design": "同一批段落＋ref 同時丟給方法 A 與方法 B，比較兩者的支持分數與證據層級。沒有 ground truth，所以測得出兩方法「一不一致」，測不出「誰對」。"
