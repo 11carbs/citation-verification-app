@@ -119,7 +119,19 @@ def test_claim_not_truncated(case):
     needle = data["expected"].get("claim_must_contain")
     if needle is None:
         pytest.skip("這筆沒有指定 claim_must_contain")
-    sample = outcome.pairs[0].claim_text if outcome.pairs else "(無配對)"
-    assert any(needle in pair.claim_text for pair in outcome.pairs), (
-        f"引用句被截斷，找不到 {needle!r}；第一筆實際為 {sample[:80]!r}"
-    )
+
+    if isinstance(needle, str):
+        sample = outcome.pairs[0].claim_text if outcome.pairs else "(無配對)"
+        assert any(needle in pair.claim_text for pair in outcome.pairs), (
+            f"引用句被截斷，找不到 {needle!r}；第一筆實際為 {sample[:80]!r}"
+        )
+        return
+
+    # {ref 編號: 字串}：指定那一筆的引用句必須含有該字串
+    for ref_number, fragment in needle.items():
+        number = int(ref_number)
+        texts = [p.claim_text for p in outcome.pairs if p.ref_number == number]
+        assert texts, f"[{number}] 沒有配對，無法檢查引用句"
+        assert any(fragment in text for text in texts), (
+            f"[{number}] 的引用句被截斷，找不到 {fragment!r}；實際為 {texts[0][:80]!r}"
+        )

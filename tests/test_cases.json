@@ -237,6 +237,136 @@
       ],
       "notes": "預期失敗，且應該失敗。標示的是「使用者從 PDF 複製」情境下的實際韌性，當待改進清單用。 ⚠️ 2026-11-22 更正：原本標為 is_real_ieee=true，實際核對原論文後確認這篇用的不是 IEEE 格式。段落與引用編號仍是真實的，可用於配對層測試，但不可用來代表 IEEE 格式的 ref。",
       "ref_style": "plain／ACM 式：作者在前、篇名不加引號。方括號編號相同，但不是 IEEE 格式"
+    },
+    {
+      "id": "case7-redaction-relatedwork",
+      "source": "paper-reading/paper-temp-storage/Enabling Secure and Scalable GDPR Compliant Blockchain Based e-KYC With Efficient Redaction.pdf（IEEE Access，DOI 10.1109/ACCESS.2025.3594656）：Related Work 的 redaction 段",
+      "is_real_ieee": true,
+      "ref_style": "嚴格 IEEE：[21] 用 ‘‘…’’，[27][28] 用 \"…\"，同一篇論文混用兩種引號",
+      "paragraph": "Xu et al. [21] incorporated trapdoor hash functions in their\nPRHBS system to facilitate secure and flexible redactions\nin the healthcare sector. In [27], The authors introduced\na secure, efficient, and accountable data management approach utilizing a redactable blockchain. They also developed a distributed trapdoor recovery mechanism that ensures\nboth efficiency and accountability. Recently, Wang [28] et\nal. present a redactable blockchain framework that supports\nboth transaction-level and block-level rewriting.",
+      "references": "[21] J. Xu et al., ‘‘A Privacy-Preserving and Redactable Healthcare Blockchain System,’’ IEEE Transactions on Services Computing, vol. 17, no. 2, pp. 364–377, Mar.-Apr. 2024, doi: 10.1109/TSC.2024.3356959.\n[27] Y. Xu et al., \"Redactable Blockchain-Based Secure and Accountable Data Management,\" in IEEE Transactions on Network and Service Management, vol. 21, no. 2, pp. 1764–1776, April 2024, doi: 10.1109/TNSM.2023.3352561.\n[28] Y. Wang, H. Peng, J. Duan, L. Wang, X. Hu and Z. Zhao, \"Resilient and Redactable Blockchain With Two-Level Rewriting and Forgery Detection,\" in IEEE Transactions on Information Forensics and Security, vol. 20, pp. 1163–1175, 2025, doi: 10.1109/TIFS.2024.3250830.",
+      "expected": {
+        "pair_count": 3,
+        "ref_numbers": [
+          21,
+          27,
+          28
+        ],
+        "matched": [
+          21,
+          27,
+          28
+        ],
+        "missing_reference": [],
+        "uncited_refs": [],
+        "compound_ref_numbers": [],
+        "claim_must_contain": {
+          "21": "trapdoor hash functions",
+          "28": "transaction-level"
+        }
+      },
+      "support_band": null,
+      "traps": [
+        "「Xu et al. [21]」、「Wang [28] et al.」的 al. 不可當句尾",
+        "「… sector. In [27],」句號後接大寫 In，是真的句尾，要切開",
+        "同一篇論文混用兩種引號，篇名都要抽得到"
+      ],
+      "notes": "著者對 [21][27][28] 的描述具體（trapdoor hash、distributed trapdoor recovery、two-level rewriting），適合做內容查證的正確答案標註。"
+    },
+    {
+      "id": "case8-zksnark",
+      "source": "paper-reading/paper-temp-storage/Enabling Secure and Scalable GDPR Compliant Blockchain Based e-KYC With Efficient Redaction.pdf（IEEE Access，DOI 10.1109/ACCESS.2025.3594656）：Related Work 的隱私保護段",
+      "is_real_ieee": true,
+      "ref_style": "嚴格 IEEE：‘‘…’’",
+      "paragraph": "In addition to supporting data redaction, several models prioritize privacy-preserving mechanisms to protect user\nanonymity. Heo et al. [16] introduced zk-SNARKs to enhance\nprivacy by generating one-time cryptographic keys for transactions, ensuring that user identities cannot be tracked.",
+      "references": "[16] W. J. Heo et al., ‘‘Decentralised Redactable Blockchain: A Privacy-Preserving Approach to Addressing Identity Tracking Challenges,’’ 2024 IEEE International Conference on Blockchain and Cryptocurrency (ICBC), Dublin, Ireland, 2024, pp. 215–219, doi: 10.1109/ICBC59979.2024.10644348.",
+      "expected": {
+        "pair_count": 1,
+        "ref_numbers": [
+          16
+        ],
+        "matched": [
+          16
+        ],
+        "missing_reference": [],
+        "uncited_refs": [],
+        "compound_ref_numbers": [],
+        "claim_must_contain": {
+          "16": "zk-SNARKs"
+        }
+      },
+      "support_band": null,
+      "traps": [
+        "第一句沒有引用，不可產生查核項目",
+        "被引文獻篇名是 Decentralised Redactable Blockchain，沒有 zk-SNARK 字樣——篇名判斷會很吃力"
+      ],
+      "notes": "篇名不含 zk-SNARK，但內容應該有。適合用來測「篇名不相關就停止」這條規則會不會誤殺。"
+    },
+    {
+      "id": "case9-ipfs",
+      "source": "paper-reading/paper-temp-storage/Enabling Secure and Scalable GDPR Compliant Blockchain Based e-KYC With Efficient Redaction.pdf（IEEE Access，DOI 10.1109/ACCESS.2025.3594656）：Related Work 的 IPFS 段",
+      "is_real_ieee": true,
+      "ref_style": "嚴格 IEEE：‘‘…’’",
+      "paragraph": "The integration of revocable IPFS with redactable\nblockchain models is another noteworthy approach to improving data management and ensuring compliance. Yeh et al.\n[14] leveraged revocable IPFS to enable selective removal of\nfiles, maintaining both privacy and usability in their GDPR-\ncompliant framework. Guo et al. [17] employed a similar\nmethod for managing EHRs, enabling rapid redactions and\nensuring compliance with privacy regulations.",
+      "references": "[14] L.-Y. Yeh et al., ‘‘GDPR-Compliant Personal Health Record Transmission With Redactable Blockchain and Revocable IPFS,’’ IEEE Transactions on Dependable and Secure Computing, vol. 21, no. 4, pp. 3342–3356, 2024, doi: 10.1109/TDSC.2023.3259071.\n[17] H. Guo et al., ‘‘Decentralized Electronic Health Records Management via Redactable Blockchain and Revocable IPFS,’’ 2024 IEEE/ACM Conference on Connected Health, Wilmington, DE, USA, 2024, pp. 167–171, doi: 10.1109/CHASE60773.2024.00028.",
+      "expected": {
+        "pair_count": 2,
+        "ref_numbers": [
+          14,
+          17
+        ],
+        "matched": [
+          14,
+          17
+        ],
+        "missing_reference": [],
+        "uncited_refs": [],
+        "compound_ref_numbers": [],
+        "claim_must_contain": {
+          "14": "revocable IPFS",
+          "17": "EHRs"
+        }
+      },
+      "support_band": null,
+      "traps": [
+        "「Yeh et al.\\n[14]」引用編號被硬換行切到下一行",
+        "「GDPR-\\ncompliant」行尾連字號必須接回去，不可變成 GDPR- compliant"
+      ],
+      "notes": "這是從 PDF 直接複製的原始換行，包含行尾連字號。"
+    },
+    {
+      "id": "case10-performance",
+      "source": "paper-reading/paper-temp-storage/Enabling Secure and Scalable GDPR Compliant Blockchain Based e-KYC With Efficient Redaction.pdf（IEEE Access，DOI 10.1109/ACCESS.2025.3594656）：實驗結果段",
+      "is_real_ieee": true,
+      "ref_style": "嚴格 IEEE：‘‘…’’",
+      "paragraph": "Figs. 2 and 3 present the authentication, proof generation,\nand verification times across different schemes. Scheme [2],\nrelying on RSA, incurs the highest computational cost due\nto expensive modular exponentiations. Scheme [6], though\nsecure with quantum key mechanisms, suffers from significant overhead caused by quantum network setup and key exchange protocols. Scheme [13] improves efficiency by using\nelliptic curve cryptography (ECC) with hashing and modular\naddition, but still faces moderate overhead from ECC operations.",
+      "references": "[2] S. Fugkew, ‘‘Enabling Trust and Privacy-Preserving e-KYC System Using Blockchain,’’ IEEE Access, vol. 10, pp. 49028–49039, 2022, doi: 10.1109/ACCESS.2022.3172973.\n[6] G. M. Faruk Ahmed et al., ‘‘Enhancing e-KYC Security and Privacy: Harnessing Quantum Computing and Blockchain in Web 3.0,’’ Distributed Ledger Technologies: Research and Practice, 2024, doi: 10.1145/3686166.\n[13] K. Takaragi et al., ‘‘Secure Revocation Features in eKYC-Privacy Protection in Central Bank Digital Currency,’’ IEEE Transactions on Fundamentals of Electronics, Communications, and Computer Sciences, vol. 3, 2023, pp. 325–332.",
+      "expected": {
+        "pair_count": 3,
+        "ref_numbers": [
+          2,
+          6,
+          13
+        ],
+        "matched": [
+          2,
+          6,
+          13
+        ],
+        "missing_reference": [],
+        "uncited_refs": [],
+        "compound_ref_numbers": [],
+        "claim_must_contain": {
+          "2": "RSA",
+          "13": "elliptic curve cryptography"
+        }
+      },
+      "support_band": null,
+      "traps": [
+        "「Figs.」後面的句號不可當句尾",
+        "第一句沒有引用編號，不可產生查核項目"
+      ],
+      "notes": "這段是對被引文獻「效能特性」的主張，要驗證得讀被引文獻的實驗節。"
     }
   ]
 }
