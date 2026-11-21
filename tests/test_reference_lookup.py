@@ -242,3 +242,22 @@ def test_ieee_access_style_reference() -> None:
     meta = extract_reference_metadata(IEEE_ACCESS_REF)
     assert meta.title == "Enabling Trust and Privacy-Preserving e-KYC System Using Blockchain"
     assert meta.doi == "10.1109/access.2022.3172973"
+
+
+@pytest.mark.parametrize(
+    ("ref_raw", "expected_title"),
+    [
+        ('[22] Anthropic, \u201cModel context protocol (MCP),\u201d Accessed: Jan. 2024.',
+         "Model context protocol (MCP)"),
+        ('[26] X. Hou et al., \u201cModel context protocol (MCP): Landscape and threats,\u201d 2025.',
+         "Model context protocol (MCP): Landscape and threats"),
+        ('[5] A. B, \u201cSome title (with parens) here,\u201d J., 2024.',
+         "Some title (with parens) here"),
+        ('[7] A. B, \u201cUnbalanced closing paren),\u201d J., 2024.',
+         "Unbalanced closing paren"),
+    ],
+)
+def test_closing_bracket_inside_the_title_is_kept(ref_raw: str, expected_title: str) -> None:
+    """結尾的逗號要去掉，但成對的右括號是篇名的一部分，不可一起砍。"""
+
+    assert extract_reference_metadata(ref_raw).title == expected_title

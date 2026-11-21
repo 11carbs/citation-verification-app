@@ -29,7 +29,8 @@ _URLISH_START_RE = re.compile(
 )
 # The next line looks like the rest of a URL: URL characters only, no colon.
 _URLISH_CONT_RE = re.compile(r"^[A-Za-z0-9\-._~/?#=&%+]+(\s|$)")
-_TRAILING = ".,;)]"
+_TRAILING = ".,;"
+_CLOSERS = {")": "(", "]": "["}
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,9 +70,25 @@ def join_reference_lines(raw: str) -> str:
 
 
 def _clean(value: str | None) -> str:
+    """Strip trailing punctuation, but keep a bracket that closes one inside.
+
+    ``"Model context protocol (MCP),"`` must keep its ``)``; only the comma goes.
+    """
+
     if not value:
         return ""
-    return value.strip().rstrip(_TRAILING).strip()
+    value = value.strip()
+    while value:
+        last = value[-1]
+        if last in _TRAILING:
+            value = value[:-1].rstrip()
+            continue
+        opener = _CLOSERS.get(last)
+        if opener and value.count(opener) < value.count(last):
+            value = value[:-1].rstrip()
+            continue
+        break
+    return value
 
 
 def extract_reference_metadata(ref_raw: str) -> ReferenceMetadata:
