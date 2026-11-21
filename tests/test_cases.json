@@ -1,0 +1,236 @@
+{
+  "version": "2026-11-21",
+  "spec_source": "汪老師 2026-11-17 meeting：輸入＝欲比對的段落＋ref，限定 IEEE 格式，使用者自己貼上",
+  "ground_truth_scope": "只有解析層（ref 編號、配對數、缺少 ref、未被引用 ref）。支持層級未標註，需人工讀被引文獻後補。",
+  "cases": [
+    {
+      "id": "case1-fido2",
+      "source": "汪老師 2026-11-17 meeting 舉例 1",
+      "is_real_ieee": true,
+      "paragraph": "Password-Free Authentication and Secure Backup: To enable secure and password-free authentication, researchers should adopt FIDO2/WebAuthn\nstandards [79].",
+      "references": "[79] \"Device onboarding overview,\" Fido Alliance, 2021. Accessed: Apr. 4, 2025. [Online]. Available: https://fidoalliance.org/device-onboarding-overview/",
+      "expected": {
+        "pair_count": 1,
+        "ref_numbers": [
+          79
+        ],
+        "matched": [
+          79
+        ],
+        "missing_reference": [],
+        "uncited_refs": [],
+        "sentence_count": 1,
+        "claim_must_contain": "Password-Free Authentication",
+        "compound_ref_numbers": []
+      },
+      "support_band": null,
+      "expected_to_fail_before_patch_0001": true,
+      "traps": [
+        "原文跨行：從 PDF 複製會在 'FIDO2/WebAuthn' 後產生硬換行，未修版 parser 會把引用句截成只剩 'standards [79].'（patch 0001 的回歸測試）"
+      ],
+      "notes": "篇名是 device onboarding，主張是 password-free authentication，屬灰色地帶，適合測「不確定」級，但正確答案需人工定。"
+    },
+    {
+      "id": "case2-w3c",
+      "source": "汪老師 2026-11-17 meeting 舉例 2",
+      "is_real_ieee": true,
+      "paragraph": "Innovative Proof Reuse and Revocation: Existing solutions utilize W3C [47], [107], [109], [110] standards for VCs, VP generation, and revocation.",
+      "references": "[47] \"Verifiable credentials data model v1.1,\" W3C. Accessed: Aug. 9, 2024. [Online]. Available: https://www.w3.org/TR/vc-data-model/\n[107] \"Verifiable credentials data model v2.0,\" W3C. Accessed: Aug. 9, 2024. [Online]. Available: https://www.w3.org/TR/vc-data-model-2.0/\n[108] \"General data protection regulation (GDPR),\" European Union, 2018. Accessed: Mar. 23, 2025. [Online]. Available: https://gdpr.eu/\n[109] \"Verifiable credentials overview,\" W3C. Accessed: Aug. 9, 2024. [Online]. Available: https://www.w3.org/TR/vc-overview/\n[110] \"Verifiable credentials bitstring status list,\" W3C. Accessed: Aug. 9, 2024. [Online]. Available: https://www.w3.org/TR/vc-bitstring-status-list/",
+      "expected": {
+        "pair_count": 4,
+        "ref_numbers": [
+          47,
+          107,
+          109,
+          110
+        ],
+        "matched": [
+          47,
+          107,
+          109,
+          110
+        ],
+        "missing_reference": [],
+        "uncited_refs": [
+          108
+        ],
+        "sentence_count": 1,
+        "compound_ref_numbers": [
+          47,
+          107,
+          109,
+          110
+        ]
+      },
+      "support_band": null,
+      "traps": [
+        "一句四個編號，測複合引用拆解",
+        "ref 清單含未被引用的 [108]，不可配對給任何引用"
+      ],
+      "notes": "已是 repo mock_data.py 的 MOCK_CLAIM / MOCK_REFERENCES 預設值。"
+    },
+    {
+      "id": "case3-auditors",
+      "source": "研方paper/A Multi-Agent Framework for Citation Hallucination Detection.pdf",
+      "is_real_ieee": true,
+      "paragraph": "Commercial citation auditors such as Citely [9], SwanRef [26], CiteCheck [8], and RefCheck-AI [20] report only a binary Real-or-Fake label [30], and academic auditors such as CiteAudit [24] query multiple bibliographic APIs but still emit the same binary verdict, so the ambiguous middle ground collapses into the same yes/no signal. Open tools such as Hallucinator [25] consult more than ten bibliographic databases in parallel, but key the verdict on title and author and leave venue, year, DOI, pages, and publisher unaudited. GPTZero's hallucination mode [13] does cross-check external sources, but audits only five fields.",
+      "references": "[8] CiteCheck. CiteCheck: Ai-powered citation verification. https://citecheck.ai/, 2024. Accessed: 2026-04.\n[9] Citely. Citely: AI citation assistant. https://citely.ai/, 2024. Accessed: 2026-04.\n[13] GPTZero Team. GPTZero: Detecting AI-generated text, 2023.\n[20] RefCheck-AI. RefCheck-AI. https://github.com/HuaHenry/RefCheck_ai, 2024. Accessed: 2026-04.\n[24] Kaiwen Shi, Weixiang Sun, Zheyuan Zhang, Lichao Sun, Nitesh V Chawla, and Yanfang Ye. Citeaudit: You cited it, but did you read it? a benchmark for verifying scientific references in the llm era. arXiv preprint arXiv:2602.23452, 2026.\n[25] Gianluca Stringhini. Hallucinator: A citation hallucination checker. https://github.com/gianlucasb/hallucinator, 2024.\n[26] SwanRef. SwanRef: Reference verification platform. https://www.swanref.org/, 2024. Accessed: 2026-04.\n[30] L. J. Janse van Rensburg. Ai-powered citation auditing: A zero-assumption protocol for systematic reference verification in academic research, 2025.",
+      "expected": {
+        "pair_count": 8,
+        "ref_numbers": [
+          9,
+          26,
+          8,
+          20,
+          30,
+          24,
+          25,
+          13
+        ],
+        "matched": [
+          8,
+          9,
+          13,
+          20,
+          24,
+          25,
+          26,
+          30
+        ],
+        "missing_reference": [],
+        "uncited_refs": [],
+        "sentence_count": 3,
+        "compound_ref_numbers": [
+          8,
+          9,
+          20,
+          24,
+          26,
+          30
+        ]
+      },
+      "support_band": null,
+      "traps": [
+        "三句八個引用，每個編號緊貼工具名稱，拆句或配對偏移會立刻顯現",
+        "[24] 的 ref 含問號 'did you read it?'，測句尾判斷不會誤切"
+      ],
+      "notes": "支持層級需人工讀被引文獻後標註。"
+    },
+    {
+      "id": "case4-venues",
+      "source": "研方paper/A Multi-Agent Framework for Citation Hallucination Detection.pdf",
+      "is_real_ieee": true,
+      "paragraph": "Recent venues documented widespread fabricated references in submitted papers, with third-party tooling flagging dozens of cases per session [12, 27]; ICLR 2026 assembled a desk-reject queue of submissions whose bibliographies contained hallucinated citations [11]; and ACM CCS 2026 published a Transparency Report enumerating the citations its review cycle flagged as AI-fabricated [1].",
+      "references": "[1] ACM CCS 2026 Program Committee. Transparency report on AI-generated citations in ACM CCS 2026 submissions. https://github.com/ACM-CCS-2026/Transparency-Report, 2026. Accessed: 2026-05.\n[11] GPTZero. GPTZero finds over 50 hallucinations in ICLR 2026 submissions. https://gptzero.me/news/iclr-2026, 2025.\n[12] GPTZero. GPTZero flags fabricated citations in NeurIPS submissions. https://gptzero.me/news/neurips/, 2025. Accessed: 2026-05.\n[27] The Register. AI conference's papers contaminated by AI hallucinations. https://www.theregister.com/2026/01/22/neurips_papers_contaiminated_ai_hallucinations/, 2026.",
+      "expected": {
+        "pair_count": 4,
+        "ref_numbers": [
+          12,
+          27,
+          11,
+          1
+        ],
+        "matched": [
+          1,
+          11,
+          12,
+          27
+        ],
+        "missing_reference": [],
+        "uncited_refs": [],
+        "sentence_count": 1,
+        "compound_ref_numbers": [
+          1,
+          11,
+          12,
+          27
+        ]
+      },
+      "support_band": null,
+      "traps": [
+        "[12, 27] 是逗號分隔複合引用，和 case2 的 [47], [107] 是不同寫法，IEEE 兩種都合法；目前無任何測試覆蓋",
+        "三個子句用分號串接而非句號，測拆句不會誤把分號當句尾"
+      ],
+      "notes": "最重要的一筆。若 parser 只認各自獨立方括號，[12, 27] 會整個漏掉或被當成不存在的編號。"
+    },
+    {
+      "id": "case5-missing",
+      "source": "合成（非真實論文）",
+      "is_real_ieee": false,
+      "paragraph": "Prior work established the baseline accuracy of automated reference checking [3], and a later replication reported substantially lower precision on non-English corpora [91].",
+      "references": "[3] A. Author and B. Writer, \"Automated reference checking at scale,\" IEEE Trans. Knowl. Data Eng., vol. 12, no. 3, pp. 45-60, 2024.",
+      "expected": {
+        "pair_count": 2,
+        "ref_numbers": [
+          3,
+          91
+        ],
+        "matched": [
+          3
+        ],
+        "missing_reference": [
+          91
+        ],
+        "uncited_refs": [],
+        "sentence_count": 1,
+        "compound_ref_numbers": [
+          3,
+          91
+        ]
+      },
+      "support_band": null,
+      "traps": [
+        "[91] 內文有、ref 清單沒有，必須輸出 ReferenceMatchStatus.MISSING_REFERENCE",
+        "不可把 missing_reference 算成「不支持」——取不到來源與內容不支持要分開計數"
+      ],
+      "notes": "對應汪老師 11/3 標準：取不到來源不是幻覺。評估的 confusion matrix 需要獨立類別。"
+    },
+    {
+      "id": "case6-pdfnoise",
+      "source": "合成（case3 經 pdftotext 實際抽出的樣子）",
+      "is_real_ieee": false,
+      "paragraph": "Commercial citation auditors such as\nCitely [9], SwanRef [26], CiteCheck [8], and RefCheck-AI [20] report only a binary Real-or-Fake\nlabel [30], and academic auditors such as CiteAudit [24] query multiple bibliographic APIs but still\nemit the same binary verdict.",
+      "references": "[20] RefCheck-AI. RefCheck-AI. https://github.com/HuaHenry/RefCheck_ai, 2024. Accessed: 2026-04. 10\n[24] Kaiwen Shi, Weixiang Sun, Zheyuan Zhang, Lichao Sun, Nitesh V Chawla, and Yanfang Ye. Citeaudit: You cited it, but did you read it? a benchmark for verifying scientific references in the llm era. arXiv preprint arXiv:2602.23452, 2026.\n[30] L. J. Janse van Rensburg. Ai-powered citation auditing: A zero-assumption protocol for systematic reference verification in academic research, 2025.",
+      "expected": {
+        "pair_count": 6,
+        "ref_numbers": [
+          9,
+          26,
+          8,
+          20,
+          30,
+          24
+        ],
+        "matched": [
+          20,
+          24,
+          30
+        ],
+        "missing_reference": [
+          8,
+          9,
+          26
+        ],
+        "uncited_refs": [],
+        "sentence_count": 1,
+        "claim_must_contain": "Commercial citation auditors",
+        "compound_ref_numbers": [
+          8,
+          9,
+          20,
+          24,
+          26,
+          30
+        ]
+      },
+      "support_band": null,
+      "expected_to_fail_before_patch_0001": true,
+      "traps": [
+        "硬換行必須接回同一句，不可截斷（patch 0001）",
+        "[20] 的 ref 尾巴黏了頁碼 10，篇名抽取要能容忍",
+        "真實 PDF 的 URL 會被空白切斷成 https:// gptzero.me/...，DOI／URL 抽取要處理"
+      ],
+      "notes": "預期失敗，且應該失敗。標示的是「使用者從 PDF 複製」情境下的實際韌性，當待改進清單用。"
+    }
+  ]
+}
