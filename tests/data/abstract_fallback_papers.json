@@ -1,0 +1,8 @@
+[
+  {"name":"ResNet","ref":"[1] K. He et al., \"Deep Residual Learning for Image Recognition,\" in Proc. IEEE CVPR, 2016. doi: 10.1109/CVPR.2016.90."},
+  {"name":"BERT","ref":"[1] J. Devlin et al., \"BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding,\" in Proc. NAACL-HLT, 2019. doi: 10.18653/v1/N19-1423."},
+  {"name":"SciBERT","ref":"[1] I. Beltagy, K. Lo, and A. Cohan, \"SciBERT: A Pretrained Language Model for Scientific Text,\" in Proc. EMNLP-IJCNLP, 2019. doi: 10.18653/v1/D19-1371."},
+  {"name":"Sentence-BERT","ref":"[1] N. Reimers and I. Gurevych, \"Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks,\" in Proc. EMNLP-IJCNLP, 2019. doi: 10.18653/v1/D19-1410."},
+  {"name":"Transformer","ref":"[1] A. Vaswani et al., \"Attention Is All You Need,\" arXiv:1706.03762, 2017. Available: https://arxiv.org/abs/1706.03762"},
+  {"name":"U-Net","ref":"[1] O. Ronneberger, P. Fischer, and T. Brox, \"U-Net: Convolutional Networks for Biomedical Image Segmentation,\" arXiv:1505.04597, 2015. Available: https://arxiv.org/abs/1505.04597"}
+]
