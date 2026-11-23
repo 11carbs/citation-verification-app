@@ -17,7 +17,7 @@ class PairingOutcome:
 
 
 def build_citation_pairs(claim_text: str, reference_text: str) -> list[CitationPair]:
-    """Create one traceable pair for each cited source in each claim segment."""
+    """Create traceable pairs of claims and candidate cited sources."""
 
     return build_pairing_outcome(claim_text, reference_text).pairs
 
@@ -39,7 +39,9 @@ def build_pairing_outcome(claim_text: str, reference_text: str) -> PairingOutcom
             )
         )
 
-    for claim in claims:
+    for claim_number, claim in enumerate(claims, start=1):
+        evaluated_claims = claim.subclaims or (claim.claim_text,)
+        group_id = f"claim_{claim_number:03d}" if claim.subclaims else ""
         for duplicate_number in claim.duplicate_numbers:
             issues.append(
                 ValidationIssue(
@@ -69,17 +71,20 @@ def build_pairing_outcome(claim_text: str, reference_text: str) -> PairingOutcom
                 ref_raw = reference.raw_text
                 error_message = ""
 
-            pairs.append(
-                CitationPair(
-                    pair_id=f"pair_{len(pairs) + 1:03d}",
-                    claim_text=claim.claim_text,
-                    citation_marker=mention.marker,
-                    ref_number=mention.ref_number,
-                    ref_raw=ref_raw,
-                    is_compound=claim.is_compound,
-                    match_status=status,
-                    error_message=error_message,
+            for evaluated_claim in evaluated_claims:
+                pairs.append(
+                    CitationPair(
+                        pair_id=f"pair_{len(pairs) + 1:03d}",
+                        claim_text=evaluated_claim,
+                        citation_marker=mention.marker,
+                        ref_number=mention.ref_number,
+                        ref_raw=ref_raw,
+                        is_compound=claim.is_compound,
+                        match_status=status,
+                        error_message=error_message,
+                        original_claim_text=claim.original_claim_text,
+                        claim_group_id=group_id,
+                    )
                 )
-            )
     return PairingOutcome(pairs=pairs, issues=issues)
 

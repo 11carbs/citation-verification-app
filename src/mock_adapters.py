@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import re
 
 from src.adapters import (
     JevJudgmentResult,
+    JudgmentStatus,
     ReferenceLookupResult,
     TitleRelevance,
 )
@@ -44,15 +46,28 @@ class MockJevAdapter:
         self,
         pair: CitationPair,
         reference: ReferenceLookupResult,
+        *,
+        lookup_abstract: Callable[[], ReferenceLookupResult] | None = None,
     ) -> JevJudgmentResult:
         choice = _MOCK_CHOICES.get(pair.ref_number, TitleRelevance.UNCERTAIN)
         score = _MOCK_SCORES.get(pair.ref_number, 0.50)
         probabilities = _probabilities_for(choice)
+        if choice is TitleRelevance.UNRELATED:
+            return JevJudgmentResult(
+                title_choice=choice,
+                title_probabilities=probabilities,
+                confidence=max(probabilities.values()),
+                evidence_basis=EvidenceBasis.TITLE,
+                status=JudgmentStatus.STOPPED,
+            )
+        if lookup_abstract is not None:
+            reference = lookup_abstract()
         return JevJudgmentResult(
             title_choice=choice,
             title_probabilities=probabilities,
             confidence=max(probabilities.values()),
             support_score=score,
+            status=JudgmentStatus.MOCK,
             evidence_basis=(
                 EvidenceBasis.ABSTRACT if reference.abstract else EvidenceBasis.TITLE
             ),

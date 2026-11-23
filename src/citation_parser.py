@@ -35,10 +35,13 @@ class ClaimCitations:
     claim_text: str
     mentions: tuple[CitationMention, ...]
     duplicate_numbers: tuple[int, ...] = ()
+    sentence_is_compound: bool = False
+    subclaims: tuple[str, ...] = ()
+    original_claim_text: str = ""
 
     @property
     def is_compound(self) -> bool:
-        return len(self.mentions) > 1
+        return self.sentence_is_compound or len(self.mentions) > 1
 
 
 _CROSS_BRACKET_RANGE_RE = re.compile(
@@ -51,6 +54,31 @@ _BRACKET_GROUP_RE = re.compile(
     r")\s*\]"
 )
 _SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?。！？])\s+")
+_CITED_CLAUSE_BOUNDARY_RE = re.compile(
+    r"(?<=\])\s*(?:,\s+(?:while|whereas)\s+|,?\s+(?P<and>and)\s+|;\s+)", re.I,
+)
+# Limit shared predicates to simple type assertions about two named subjects.
+# Relations, comparisons, and qualifications stay in the original sentence.
+_NAMED_SUBJECT = r"[A-Z][A-Za-z0-9]*(?:[-_][A-Za-z0-9]+)*"
+_TYPE_PHRASE = (
+    r"(?:(?:pre-?trained|large|scientific|deep|neural|convolutional|"
+    r"bidirectional|multilingual|generative|autoregressive|open-source|"
+    r"(?:un|self-)?supervised|transformer-based) )*"
+    r"(?:(?:language|vision|machine learning|deep learning) )?"
+    r"(?:model|network|algorithm|dataset|benchmark|method|system|architecture|tool|"
+    r"framework|protocol|standard|classifier|encoder|decoder)"
+)
+_SHARED_TYPE_RE = re.compile(
+    rf"(?P<first>{_NAMED_SUBJECT}) and (?P<second>{_NAMED_SUBJECT}) are (?P<kind>{_TYPE_PHRASE})s"
+)
+_SINGLE_TYPE_RE = re.compile(
+    rf"{_NAMED_SUBJECT} is (?:a|an) {_TYPE_PHRASE}"
+)
+_TYPE_CLAUSE_SEPARATOR_RE = re.compile(r";\s+|,\s+and\s+|\s+and\s+")
+_DEPENDENT_CLAUSE_START_RE = re.compile(
+    r"^(?:[a-z]+ing|only|not|also|even|to|for|from|during|under|at|by|with|without|in|on|"
+    r"it|they|this|these|those|such|that|which|whose)\b", re.I,
+)
 _PARAGRAPH_BREAK_RE = re.compile(r"\n[ \t]*\n")
 _LINE_HYPHEN_RE = re.compile(r"-[ \t]*\n[ \t]*(?=[a-z])")
 # A period after these words does not end a sentence.
@@ -115,34 +143,102 @@ def extract_citation_numbers(text: str) -> list[int]:
 
 
 def extract_claim_citations(text: str) -> list[ClaimCitations]:
-    """Return only sentence-like segments that contain numeric citations."""
+    """Return cited sentences, narrowed to clauses when their citation scopes are clear."""
 
     claims: list[ClaimCitations] = []
     for segment in _split_claim_segments(text):
         groups = extract_citation_groups(segment)
         if not groups:
             continue
-
-        mentions: list[CitationMention] = []
-        seen: set[int] = set()
-        duplicates: list[int] = []
-        for group in groups:
-            for number in group.numbers:
-                if number in seen:
-                    if number not in duplicates:
-                        duplicates.append(number)
-                    continue
-                seen.add(number)
-                mentions.append(CitationMention(ref_number=number, marker=group.marker))
-
-        claims.append(
-            ClaimCitations(
-                claim_text=segment.strip(),
-                mentions=tuple(mentions),
-                duplicate_numbers=tuple(duplicates),
+        sentence_is_compound = len({number for group in groups for number in group.numbers}) > 1
+        for claim, claim_groups in _scope_cited_clauses(segment, groups):
+            subclaims = _shared_subclaims(segment, groups) if sentence_is_compound and claim == segment else ()
+            claims.append(
+                _claim_citations(
+                    claim, claim_groups, sentence_is_compound, subclaims,
+                    original_claim_text=segment if subclaims or claim != segment else "",
+                )
             )
-        )
     return claims
+
+
+def _shared_subclaims(segment: str, groups: list[CitationGroup]) -> tuple[str, ...]:
+    if segment[groups[-1].end :].strip(" \t."):
+        return ()
+    if any(
+        segment[left.end : right.start].strip(" \t,;")
+        for left, right in zip(groups, groups[1:])
+    ):
+        return ()
+    statement = segment[: groups[0].start].rstrip()
+    match = _SHARED_TYPE_RE.fullmatch(statement)
+    if match is not None and match["first"].casefold() != match["second"].casefold():
+        kind = match["kind"]
+        article = "an" if kind.startswith(("a", "e", "i", "o", "u")) else "a"
+        return (f"{match['first']} is {article} {kind}.", f"{match['second']} is {article} {kind}.")
+    clauses = _TYPE_CLAUSE_SEPARATOR_RE.split(statement)
+    if len(set(clauses)) > 1 and all(_SINGLE_TYPE_RE.fullmatch(clause) for clause in clauses):
+        return tuple(f"{clause}." for clause in dict.fromkeys(clauses))
+    return ()
+
+
+def _scope_cited_clauses(segment: str, groups: list[CitationGroup]) -> list[tuple[str, list[CitationGroup]]]:
+    # Only split at an explicit boundary directly after a numeric citation and
+    # when the final clause also ends in a citation. Keep shared/ambiguous scopes.
+    if len(groups) < 2 or segment[groups[-1].end :].strip(" \t.!?。！？"):
+        return [(segment, groups)]
+
+    boundaries = {match.start(): match for match in _CITED_CLAUSE_BOUNDARY_RE.finditer(segment)}
+    scoped: list[tuple[str, list[CitationGroup]]] = []
+    text_start = group_start = 0
+    for index, group in enumerate(groups[:-1]):
+        boundary = boundaries.get(group.end)
+        if boundary is None:
+            continue
+        before = segment[text_start : group.start]
+        after = segment[boundary.end() : groups[index + 1].start].strip()
+        if not any(char.isalpha() for char in before) or not any(char.isalpha() for char in after):
+            continue
+        if _DEPENDENT_CLAUSE_START_RE.match(after):
+            continue
+        if boundary["and"] and not (
+            _SINGLE_TYPE_RE.fullmatch(before.partition("[")[0].strip())
+            and _SINGLE_TYPE_RE.fullmatch(after.strip())
+        ):
+            continue
+        scoped.append((segment[text_start : group.end], groups[group_start : index + 1]))
+        text_start, group_start = boundary.end(), index + 1
+    scoped.append((segment[text_start:], groups[group_start:]))
+    return scoped
+
+
+def _claim_citations(
+    claim: str,
+    groups: list[CitationGroup],
+    sentence_is_compound: bool,
+    subclaims: tuple[str, ...],
+    *,
+    original_claim_text: str,
+) -> ClaimCitations:
+    mentions: list[CitationMention] = []
+    seen: set[int] = set()
+    duplicates: list[int] = []
+    for group in groups:
+        for number in group.numbers:
+            if number in seen:
+                if number not in duplicates:
+                    duplicates.append(number)
+                continue
+            seen.add(number)
+            mentions.append(CitationMention(ref_number=number, marker=group.marker))
+    return ClaimCitations(
+        claim_text=claim.strip(),
+        mentions=tuple(mentions),
+        duplicate_numbers=tuple(duplicates),
+        sentence_is_compound=sentence_is_compound,
+        subclaims=subclaims,
+        original_claim_text=original_claim_text,
+    )
 
 
 def _split_claim_segments(text: str) -> list[str]:

@@ -13,9 +13,11 @@ _LEADING_NUMBER_RE = re.compile(r"^\s*\[\d+\]\s*")
 # IEEE 的篇名引號在不同排版下長得不一樣：
 #   “…”（彎引號）、"…"（直引號）、''…''（兩個單引號，IEEE Access 的 PDF 常見）、
 #   ‘‘…’’（兩個彎單引號，pdftotext 從 IEEEtran 抽出來的樣子）、``…''（LaTeX 原始寫法）
-_OPEN_QUOTE = r"(?:\u201c|\u2018\u2018|``|''|\")"
-_CLOSE_QUOTE = r"(?:\u201d|\u2019\u2019|''|\")"
-_TITLE_RE = re.compile(_OPEN_QUOTE + r"(.+?)" + _CLOSE_QUOTE, re.DOTALL)
+_TITLE_RE = re.compile(
+    r'"(?P<straight>.+?)"|\u201c(?P<curly>.+?)\u201d|'
+    r"\u2018\u2018(?P<single_curly>.+?)\u2019\u2019|(?:``|'')(?P<latex>.+?)''",
+    re.DOTALL,
+)
 _DOI_RE = re.compile(r"\b(10\.\d{4,9}/[^\s\"“”<>]+)", re.IGNORECASE)
 _URL_RE = re.compile(r"https?://[^\s\"“”<>]+", re.IGNORECASE)
 # arXiv:2602.23452 / arXiv:2602.23452v2 / arxiv.org/abs/2602.23452 / 舊式 cs.CL/0112017
@@ -24,6 +26,8 @@ _ARXIV_RE = re.compile(
     r"(?P<id>\d{4}\.\d{4,5}(?:v\d+)?|[a-z-]+(?:\.[A-Z]{2})?/\d{7}(?:v\d+)?)",
     re.IGNORECASE,
 )
+_REFERENCE_TAIL_RE = re.compile(r"\b(?:accessed\s*:|available\s*:|doi\s*:|https?://)", re.IGNORECASE)
+_YEAR_RE = re.compile(r"(?<![\w./–—-])(?:19|20)\d{2}(?=\s*(?:[,.;)\]]|$))")
 _URLISH_START_RE = re.compile(
     r"^(https?://|www\.|doi\.org|dx\.doi\.org|10\.\d{4,9}/)", re.IGNORECASE
 )
@@ -44,6 +48,8 @@ class ReferenceMetadata:
     url: str = ""
     arxiv_id: str = ""
     parse_note: str = ""
+    first_author: str = ""
+    publication_year: int | None = None
 
     @property
     def has_identifier(self) -> bool:
@@ -104,7 +110,16 @@ def extract_reference_metadata(ref_raw: str) -> ReferenceMetadata:
     doi_match = _DOI_RE.search(body)
     url_match = _URL_RE.search(body)
     arxiv_match = _ARXIV_RE.search(body)
-    title = _clean(title_match.group(1)) if title_match else ""
+    title = _clean(title_match.group(title_match.lastgroup)) if title_match else ""
+    first_author = ""
+    publication_year = None
+    if title_match:
+        byline = body[:title_match.start()]
+        first_author = re.split(r",|\s+and\s+|\s+et\s+al\.?", byline, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+        publication_text = _REFERENCE_TAIL_RE.split(body[title_match.end():], maxsplit=1)[0]
+        years = set(_YEAR_RE.findall(publication_text))
+        if len(years) == 1:
+            publication_year = int(years.pop())
     arxiv_id = _clean(arxiv_match.group("id")) if arxiv_match else ""
     notes = []
     if not title:
@@ -117,4 +132,6 @@ def extract_reference_metadata(ref_raw: str) -> ReferenceMetadata:
         url=_clean(url_match.group(0)) if url_match else "",
         arxiv_id=arxiv_id,
         parse_note="；".join(notes),
+        first_author=first_author,
+        publication_year=publication_year,
     )

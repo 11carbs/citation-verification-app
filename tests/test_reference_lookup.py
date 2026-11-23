@@ -1,11 +1,22 @@
 """第二人：ref 解析與查摘要（不連網，用假的 HTTP 回應）。"""
 
+from types import SimpleNamespace
+from unittest.mock import Mock
+
 import pytest
 
 from src.pairing import build_citation_pairs
 from src.pipeline import run_method_a_pipeline
 from src.mock_adapters import MockJevAdapter
-from src.reference_lookup import ReferenceLookupAdapter, rebuild_openalex_abstract
+from src.reference_lookup import (
+    OPENALEX_BASE,
+    CROSSREF_BASE,
+    S2_BASE,
+    ReferenceLookupAdapter,
+    RequestsClient,
+    ScholarRequestSchedule,
+    rebuild_openalex_abstract,
+)
 from src.reference_metadata import extract_reference_metadata
 from src.schemas import CitationPair, SourceStatus
 
@@ -97,6 +108,130 @@ def test_doi_hit_with_abstract() -> None:
     assert result.error_message == ""
 
 
+def test_official_site_reads_labeled_abstract_instead_of_searching_its_title():
+    url = "https://agoraprotocol.org/protocol/"
+    html = (
+        '<h1>Agent Protocol</h1><meta name="description" content="A promotional description">'
+        '<section id="abstract"><h2>Abstract</h2><p>Official abstract fixture.</p></section>'
+    )
+    http = FakeHttp({url: (200, {"html": html}, "")})
+
+    result = ReferenceLookupAdapter(http=http).lookup(pair(f'[1] "Agent Protocol," [Online]. {url}'))
+
+    assert http.calls == [url]
+    assert result.source_status is SourceStatus.GOT_ABSTRACT
+    assert result.abstract == "Official abstract fixture."
+    assert result.abstract_url == url
+
+
+@pytest.mark.parametrize(("code", "expected"), [
+    (200, SourceStatus.NO_ABSTRACT),
+    (403, SourceStatus.LOOKUP_FAILED),
+    (404, SourceStatus.NOT_FOUND),
+])
+def test_official_site_does_not_substitute_marketing_text_or_an_unrelated_paper(code, expected):
+    url = "https://agentnetworkprotocol.com/en/"
+    html = '<h1>Agent Protocol</h1><meta name="description" content="A promotional description">'
+    http = FakeHttp({
+        url: (code, {"html": html} if code == 200 else None, f"HTTP {code}"),
+        S2_BASE: (200, {"data": [{"title": "Agent Protocol", "abstract": "A different paper."}]}, ""),
+    })
+
+    result = ReferenceLookupAdapter(http=http).lookup(pair(f'[1] "Agent Protocol," [Online]. {url}'))
+
+    assert http.calls == [url]
+    assert result.source_status is expected
+    assert result.abstract == ""
+
+
+@pytest.mark.parametrize("publisher_doi", ["10.1109/example.1234", "10.1109/example.9999"])
+def test_ieee_abstract_fallback_checks_publisher_doi(publisher_doi):
+    doi = "10.1109/example.1234"
+    title = "An IEEE record"
+    url = "https://ieeexplore.ieee.org/document/1234"
+    html = (
+        f'<meta name="citation_doi" content="{publisher_doi}"><meta name="citation_title" content="{title}">'
+        '<meta name="citation_abstract" content="Official abstract fixture.">'
+    )
+    http = FakeHttp({
+        S2_BASE: (429, None, "HTTP 429"),
+        CROSSREF_BASE: (200, {"message": {"DOI": doi, "title": [title],
+                                         "resource": {"primary": {"URL": url}}}}, ""),
+        url: (200, {"html": html}, ""),
+    })
+
+    result = ReferenceLookupAdapter(http=http).lookup(pair(f'[1] "{title}," doi: {doi}.'))
+
+    assert url in http.calls
+    if publisher_doi == doi:
+        assert result.abstract_source == "IEEE Xplore"
+        assert result.abstract == "Official abstract fixture."
+        assert result.abstract_url == url
+    else:
+        assert result.source_status is SourceStatus.LOOKUP_FAILED
+        assert result.abstract == ""
+        assert "頁面的 DOI 缺少或與書目不符" in result.source_note
+
+
+@pytest.mark.parametrize(("doi_path", "paper_id"), [
+    ("v1/2020.emnlp-main.609", "2020.emnlp-main.609"),
+    ("2026.emnlp-main.123", "2026.emnlp-main.123"),
+    ("v1/w19-2111", "W19-2111"),
+])
+def test_acl_doi_uses_matching_anthology_id_directly(doi_path, paper_id):
+    title = "An ACL paper with an abstract"
+    ref = f'[1] A. Author, "{title}," doi: 10.18653/{doi_path}.'
+    endpoint = f"{S2_BASE}/paper/ACL:{paper_id}"
+    official = f"https://aclanthology.org/{paper_id}/"
+    http = FakeHttp({endpoint: (200, {"title": title, "abstract": "The full abstract"}, "")})
+    result = ReferenceLookupAdapter(http=http).lookup(pair(ref))
+    assert http.calls == [endpoint, official]
+    assert result.abstract == "The full abstract"
+    assert result.abstract_source == "semantic_scholar"
+    assert result.doi == f"10.18653/{doi_path}"
+    assert "ACL 編號" in result.source_note
+
+
+@pytest.mark.parametrize(("doi", "paper_id"), [
+    ("10.18653/v1/D19-1371", "D19-1371"),
+    ("10.18653/v1/n19-1423", "N19-1423"),
+    ("10.18653/v1/W19-2111", "W19-2111"),
+    ("10.3115/v1/P15-2081", "P15-2081"),
+])
+def test_acl_legacy_doi_uses_official_abstract_during_scholar_cooldown(doi, paper_id):
+    title = "A documented work with a legacy ACL identifier"
+    ref = f'[1] A. Author, "{title}," doi: {doi}.'
+    scholar = f"{S2_BASE}/paper/ACL:{paper_id}"
+    official = f"https://aclanthology.org/{paper_id}/"
+    html = (f'<meta name="citation_doi" content="{doi}"><meta name="citation_title" content="{title}">'
+            '<div class="acl-abstract"><h5>Abstract</h5><span>Official abstract fixture.</span></div>')
+    http = FakeHttp({
+        scholar: (None, None, "上一筆收到 HTTP 429，暫緩查詢"),
+        official: (200, {"html": html}, ""),
+    })
+
+    result = ReferenceLookupAdapter(http=http).lookup(pair(ref))
+
+    assert http.calls == [scholar, official]
+    assert result.source_status is SourceStatus.GOT_ABSTRACT
+    assert result.abstract == "Official abstract fixture."
+    assert result.abstract_source == "ACL Anthology"
+    assert result.abstract_url == official
+
+
+def test_missing_acl_identifier_still_tries_the_original_doi():
+    title = "An ACL paper with an abstract"
+    doi = "10.18653/v1/2020.emnlp-main.609"
+    ref = f'[1] A. Author, "{title}," doi: {doi}.'
+    endpoint = f"{S2_BASE}/paper/DOI:{doi}"
+    http = FakeHttp({endpoint: (200, {"title": title, "abstract": "DOI result"}, "")})
+    result = ReferenceLookupAdapter(http=http).lookup(pair(ref))
+    assert http.calls == [f"{S2_BASE}/paper/ACL:2020.emnlp-main.609", endpoint,
+                          "https://aclanthology.org/2020.emnlp-main.609/"]
+    assert result.abstract == "DOI result"
+    assert result.abstract_source == "semantic_scholar"
+
+
 def test_title_hit_with_abstract() -> None:
     http = FakeHttp({ISIK: (200, {"data": [{"title": ISIK, "abstract": "ABS"}]}, "")})
     result = ReferenceLookupAdapter(http=http).lookup(pair(ISIK_REF, 2))
@@ -118,14 +253,130 @@ def test_title_mismatch_is_not_found() -> None:
     assert "篇名不符" in result.error_message
 
 
-def test_wrong_doi_falls_back_to_title() -> None:
+def test_wrong_doi_requires_identifier_confirmation_for_a_title_match() -> None:
     http = FakeHttp({
         "DOI:10.1038/s41598-026-60947-3": (200, {"title": ISIK, "abstract": "ISIK ABS"}, ""),
         WALTERS: (200, {"data": [{"title": WALTERS, "abstract": "WALTERS ABS"}]}, ""),
     })
     result = ReferenceLookupAdapter(http=http).lookup(pair(WRONG_DOI_REF, 3))
-    assert result.abstract == "WALTERS ABS"
+    assert result.abstract == ""
     assert "DOI 可能寫錯" in result.source_note
+    assert "以篇名找到的 DOI 缺少或與書目不符" in result.source_note
+
+
+@pytest.mark.parametrize("scholar_response", [
+    (429, None, "HTTP 429"),
+    (404, None, "HTTP 404"),
+    (None, None, "連線失敗：ReadTimeout"),
+    (200, {"title": WALTERS, "abstract": None}, ""),
+])
+def test_all_scholar_misses_can_use_openalex(scholar_response) -> None:
+    doi = "10.1038/s41598-023-41032-5"
+    url = f"{OPENALEX_BASE}/works/doi:{doi}"
+    http = FakeHttp({
+        S2_BASE: scholar_response,
+        url: (200, {"doi": doi, "display_name": WALTERS,
+                    "abstract_inverted_index": {"A": [0], "summary.": [1]}}, ""),
+    })
+    result = ReferenceLookupAdapter(http=http).lookup(pair(WALTERS_REF))
+    assert result.abstract == "A summary."
+    assert result.abstract_source == "openalex"
+    assert result.source_status is SourceStatus.GOT_ABSTRACT
+    assert "完整性未經官方摘要核對" in result.source_note
+    assert http.calls[-1] == url
+
+
+def test_malformed_backup_record_does_not_stop_openalex_lookup() -> None:
+    doi = "10.1038/s41598-023-41032-5"
+    http = FakeHttp({
+        S2_BASE: (429, None, "HTTP 429"),
+        CROSSREF_BASE: (200, {"message": "unexpected"}, ""),
+        "europepmc": (200, {"resultList": "unexpected"}, ""),
+        OPENALEX_BASE: (200, {"doi": doi, "display_name": WALTERS,
+                             "abstract_inverted_index": {"An": [0], "abstract.": [1]}}, ""),
+    })
+    result = ReferenceLookupAdapter(http=http).lookup(pair(WALTERS_REF))
+    assert result.abstract_source == "openalex"
+    assert "Crossref 未提供可解析的書目紀錄" in result.source_note
+
+
+def test_openalex_fragment_is_not_used_as_evidence() -> None:
+    http = FakeHttp({
+        S2_BASE: (429, None, "HTTP 429"),
+        OPENALEX_BASE: (200, {"results": [{"display_name": ISIK,
+                                          "abstract_inverted_index": {"Fragment...": [0]}}]}, ""),
+    })
+    result = ReferenceLookupAdapter(http=http).lookup(pair(ISIK_REF, 2))
+    assert result.source_status is SourceStatus.LOOKUP_FAILED
+    assert not result.abstract
+    assert "截斷" in result.error_message
+
+
+@pytest.mark.parametrize(("page_id", "page_title", "second_author", "crossref_authors", "accepted"), [
+    ("2501.01234", "Comparing two graph representations", "Emilia Diaz", True, True),
+    ("2501.01234", "Comparing two graph representations", "Diaz, Emilia", False, True),
+    ("2501.01234", "Comparing two graph representations", "Elena Diaz", True, False),
+    ("2501.01234", "Comparing two graph architectures", "Emilia Diaz", True, False),
+    ("2501.05678", "Comparing two graph representations", "Emilia Diaz", True, False),
+])
+def test_openalex_without_abstract_can_lead_to_verified_arxiv(
+    page_id, page_title, second_author, crossref_authors, accepted,
+):
+    title = "Comparing two graph representations"
+    doi = "10.5555/fictional.graph.2025"
+    ref = f'[1] A. Rivera and E. Diaz, "{title}," doi: {doi}.'
+    published = {"doi": doi, "display_name": title, "abstract_inverted_index": None}
+    record = {"DOI": doi, "title": [title]}
+    if crossref_authors:
+        record["author"] = [{"given": "Alma", "family": "Rivera"}, {"given": "Emilia", "family": "Diaz"}]
+    else:
+        published["authorships"] = [
+            {"author": {"display_name": "Alma Rivera"}}, {"author": {"display_name": "Emilia Diaz"}},
+        ]
+    candidate = {"doi": "https://doi.org/10.48550/arXiv.2501.01234", "display_name": title,
+                 "abstract_inverted_index": {"Unverified": [0], "index.": [1]}}
+    official = "https://arxiv.org/abs/2501.01234"
+    html = (f'<meta name="citation_arxiv_id" content="{page_id}">'
+            f'<meta name="citation_title" content="{page_title}">'
+            '<meta name="citation_author" content="Alma Rivera">'
+            f'<meta name="citation_author" content="{second_author}">'
+            '<meta name="citation_abstract" content="Abstract from the official preprint.">')
+    http = FakeHttp({
+        S2_BASE: (429, None, "HTTP 429"),
+        CROSSREF_BASE: (200, {"message": record}, ""),
+        f"{OPENALEX_BASE}/works/doi:{doi}": (200, published, ""),
+        f"{OPENALEX_BASE}/works": (200, {"results": [candidate, published]}, ""),
+        official: (200, {"html": html}, ""),
+    })
+    result = ReferenceLookupAdapter(http=http).lookup(pair(ref))
+
+    assert http.calls[-3:] == [f"{OPENALEX_BASE}/works/doi:{doi}", f"{OPENALEX_BASE}/works", official]
+    assert "OpenAlex 有相符書目，但未提供可用摘要" in result.source_note
+    assert result.doi == doi
+    if accepted:
+        assert result.source_status is SourceStatus.GOT_ABSTRACT
+        assert result.abstract == "Abstract from the official preprint."
+        assert result.abstract_source == "arXiv 預印本"
+        assert result.abstract_url == official
+    else:
+        assert result.source_status is SourceStatus.LOOKUP_FAILED
+        assert result.abstract == ""
+        assert "不符" in result.source_note
+
+
+def test_openalex_checks_title_endpoint_after_doi_record_has_no_abstract():
+    doi = "10.1038/s41598-023-41032-5"
+    formal = {"doi": doi, "display_name": WALTERS, "abstract_inverted_index": None}
+    http = FakeHttp({
+        S2_BASE: (429, None, "HTTP 429"),
+        f"{OPENALEX_BASE}/works/doi:{doi}": (200, formal, ""),
+        f"{OPENALEX_BASE}/works": (200, {"results": [
+            {**formal, "abstract_inverted_index": {"Full": [0], "abstract.": [1]}},
+        ]}, ""),
+    })
+    result = ReferenceLookupAdapter(http=http).lookup(pair(WALTERS_REF))
+    assert result.abstract_source == "openalex"
+    assert result.abstract == "Full abstract."
 
 
 def test_rate_limit_is_not_reported_as_nonexistent() -> None:
@@ -133,7 +384,128 @@ def test_rate_limit_is_not_reported_as_nonexistent() -> None:
     result = ReferenceLookupAdapter(http=http).lookup(pair(ISIK_REF, 2))
     assert result.source_status is SourceStatus.LOOKUP_FAILED
     assert result.source_status is not SourceStatus.NOT_FOUND
-    assert "不代表文獻不存在" in result.error_message
+    assert "HTTP 429" in result.error_message
+    assert "沒有取得可採用的備援摘要" in result.error_message
+
+
+@pytest.mark.parametrize(
+    ("header", "delay"),
+    [("30", 30), ("Tue, 14 Nov 2023 22:13:50 GMT", 30), ("", 8)],
+)
+def test_retry_after_allows_backup_and_avoids_another_scholar_call(monkeypatch, header, delay):
+    elapsed = 0
+    clock = SimpleNamespace(monotonic=lambda: elapsed, time=lambda: 1_700_000_000 + elapsed, sleep=Mock())
+    monkeypatch.setattr("src.reference_lookup.time", clock)
+    limited = Mock(status_code=429, headers={"Retry-After": header, "X-Amzn-RequestId": "request-id"},
+                   text='{"message":"Too Many Requests key-for-test"}')
+    backup = Mock(status_code=200, ok=True)
+    backup.json.return_value = {
+        "message": {"DOI": "10.1038/s41598-023-41032-5", "title": [WALTERS],
+                    "abstract": "<jats:p>Backup abstract</jats:p>"},
+    }
+
+    cooldowns = {}
+    client = RequestsClient(min_interval=0, cooldowns=cooldowns)
+    client.session = Mock()
+    client.session.get.side_effect = [limited, backup]
+    result = ReferenceLookupAdapter(http=client, s2_key="key-for-test").lookup(pair(WALTERS_REF))
+
+    [first, second] = client.session.get.call_args_list
+    assert first.args[0].startswith(S2_BASE)
+    assert second.args[0].startswith(CROSSREF_BASE)
+    assert result.abstract == "Backup abstract"
+    assert result.abstract_source == "Crossref"
+    blocked, recovered = result.attempts
+    assert blocked["status"] == 429 and recovered["status"] == 200
+    assert blocked["headers"]["x-amzn-requestid"] == "request-id"
+    assert "[redacted]" in blocked["body_excerpt"]
+    assert "key-for-test" not in str(result.attempts)
+    limited.close.assert_called_once()
+    clock.sleep.assert_not_called()
+
+    # A subsequent press of the button creates a new client in the same session.
+    second_client = RequestsClient(min_interval=0, cooldowns=cooldowns)
+    second_client.session = Mock()
+    scholar_url = f"{S2_BASE}/paper/search/match"
+    elapsed = delay - 1
+    status, _, reason = second_client.get(scholar_url)
+    assert status is None
+    assert "429" in reason
+    second_client.session.get.assert_not_called()
+
+    elapsed = delay
+    scholar = Mock(status_code=200, ok=True)
+    scholar.json.return_value = {"data": []}
+    second_client.session.get.return_value = scholar
+    assert second_client.get(scholar_url)[0] == 200
+    second_client.session.get.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("retry_after", "next_status", "expected_calls"),
+    [("3", 200, 2), ("3", 429, 2), ("120", 429, 1)],
+)
+def test_scholar_retries_at_most_once_within_wait_budget(monkeypatch, retry_after, next_status, expected_calls):
+    elapsed = 0.0
+
+    def advance(seconds: float) -> None:
+        nonlocal elapsed
+        elapsed += seconds
+
+    clock = SimpleNamespace(monotonic=lambda: elapsed, sleep=Mock(side_effect=advance))
+    monkeypatch.setattr("src.reference_lookup.time", clock)
+    limited = Mock(status_code=429, headers={"Retry-After": retry_after})
+    recovered = Mock(status_code=200, ok=True)
+    recovered.json.return_value = {"title": WALTERS}
+    client = RequestsClient(retry_scholar=True)
+    client.session = Mock()
+    client.session.get.side_effect = [limited, recovered if next_status == 200 else limited]
+
+    result = client.get(f"{S2_BASE}/paper/search/match")
+
+    assert result[0] == next_status
+    assert client.session.get.call_count == expected_calls
+    if expected_calls == 2:
+        clock.sleep.assert_called_once_with(3.0)
+    else:
+        clock.sleep.assert_not_called()
+
+
+def test_scholar_schedule_is_shared_by_separate_clients(monkeypatch):
+    elapsed = 0.0
+
+    def advance(seconds: float) -> None:
+        nonlocal elapsed
+        elapsed += seconds
+
+    clock = SimpleNamespace(monotonic=lambda: elapsed, sleep=Mock(side_effect=advance))
+    monkeypatch.setattr("src.reference_lookup.time", clock)
+    success = Mock(status_code=200, ok=True)
+    success.json.return_value = {"title": WALTERS}
+    limited = Mock(status_code=429, headers={"Retry-After": "120"})
+
+    schedule = ScholarRequestSchedule()
+    first_client = RequestsClient(scholar_schedule=schedule, retry_scholar=True)
+    second_client = RequestsClient(scholar_schedule=schedule, retry_scholar=True)
+    first_client.session = Mock()
+    second_client.session = Mock()
+    first_client.session.get.return_value = success
+    second_client.session.get.return_value = limited
+    scholar_url = f"{S2_BASE}/paper/search/match"
+
+    assert first_client.get(scholar_url)[0] == 200
+    assert second_client.get(scholar_url)[0] == 429
+    clock.sleep.assert_called_once_with(1.2)
+
+    status, _, reason = first_client.get(scholar_url)
+    assert status is None
+    assert "429" in reason
+    first_client.session.get.assert_called_once()
+    second_client.session.get.assert_called_once()
+
+    assert first_client.get(f"{OPENALEX_BASE}/works")[0] == 200
+    elapsed += 120
+    assert first_client.get(scholar_url)[0] == 200
 
 
 def test_openalex_backup() -> None:
@@ -142,6 +514,172 @@ def test_openalex_backup() -> None:
     result = ReferenceLookupAdapter(openalex_key="k", http=http).lookup(pair(ISIK_REF, 2))
     assert result.abstract == "Hello world"
     assert result.abstract_source == "openalex"
+
+
+@pytest.mark.parametrize(("ref", "candidate_title", "author", "year", "expected_note"), [
+    pytest.param(
+        '[1] I. Beltagy et al., "SciBERT: A Pretrained Language Model for Scientific Texts," '
+        "EMNLP, 2019. Accessed: Nov. 23, 2026.",
+        "SciBERT: A Pretrained Language Model for Scientific Text", "Iz Beltagy", 2019,
+        "採用近似篇名", id="accept-title-variant",
+    ),
+    pytest.param(
+        '[1] I. Beltagy, "SciBERT: A Pretrained Language Model for Scientific Texts," EMNLP, 2019.',
+        "SciBERT: A Pretrained Language Model for Scientific Text", "A. Beltagy", 2019,
+        "無法核對第一作者", id="reject-different-given-initial",
+    ),
+    pytest.param(
+        '[1] "SciBERT: A Pretrained Language Model for Scientific Texts," EMNLP, 2019.',
+        "SciBERT: A Pretrained Language Model for Scientific Text", "Iz Beltagy", 2019,
+        "無法核對第一作者", id="reject-without-cited-author",
+    ),
+    pytest.param(
+        '[1] I. Beltagy, "SciBERT: A Pretrained Language Model for Scientific Texts," EMNLP, 2019.',
+        "SciBERT: A Pretrained Language Model for Scientific Text", "Iz Beltagy", 2020,
+        "出版年與書目不符", id="reject-different-year",
+    ),
+    pytest.param(
+        '[1] I. Beltagy, "SciBERT: A Pretrained Language Model for Scientific Texts," EMNLP, 2019.',
+        "SciBERT: A Pretrained Language Model for Scientific Text", "Iz Beltagy", None,
+        "缺少年份", id="reject-missing-candidate-year",
+    ),
+    pytest.param(
+        '[1] M. Sporny et al., "Verifiable Credentials Data Model 1.0."',
+        "Verifiable Credentials Data Model v1.1", "Manu Sporny", 2022,
+        "版本與書目不符", id="reject-different-version-without-cited-year",
+    ),
+    pytest.param(
+        '[1] I. Beltagy, "SciBERT: A Pretrained Language Model for Scientific Text," EMNLP, 2019.',
+        "SciBERT: A Pretrained Language Model for Science", "Iz Beltagy", 2019,
+        "篇名不符", id="reject-below-095",
+    ),
+])
+def test_openalex_title_variant_without_doi(ref, candidate_title, author, year, expected_note) -> None:
+    work = {
+        "display_name": candidate_title,
+        "publication_year": year,
+        "authorships": [{"author_position": "first", "author": {"display_name": author}}],
+        "abstract_inverted_index": {"Candidate": [0], "abstract": [1]},
+    }
+    http = FakeHttp({
+        "search/match": (429, None, "HTTP 429"),
+        f"{OPENALEX_BASE}/works": (200, {"results": [work]}, ""),
+    })
+    result = ReferenceLookupAdapter(openalex_key="k", http=http).lookup(pair(ref))
+
+    assert http.calls == [f"{S2_BASE}/paper/search/match", f"{OPENALEX_BASE}/works"]
+    assert expected_note in result.source_note
+    if expected_note == "採用近似篇名":
+        assert result.abstract_source == "openalex"
+        assert result.abstract == "Candidate abstract"
+    else:
+        assert result.abstract == ""
+
+
+def test_openalex_rejects_two_verified_title_variants_without_doi() -> None:
+    ref = '[1] A. Rivera, "Evaluating citations with large language models," J., 2026.'
+    works = [
+        {"display_name": title, "publication_year": 2026,
+         "authorships": [{"raw_author_name": "Alma Rivera"}],
+         "abstract_inverted_index": {"Abstract": [0]}}
+        for title in (
+            "Evaluating citation with large language models",
+            "Evaluating citations with a large language model",
+        )
+    ]
+    http = FakeHttp({f"{OPENALEX_BASE}/works": (200, {"results": works}, "")})
+    result = ReferenceLookupAdapter(openalex_key="k", http=http).lookup(pair(ref))
+
+    assert result.abstract == ""
+    assert "多筆相符紀錄" in result.source_note
+
+
+def test_same_paper_reuses_scholar_abstract_across_runs_even_if_reference_number_changes() -> None:
+    cache = {}
+    first_http = FakeHttp({
+        "DOI:10.1038/s41598-023-41032-5": (200, {"title": WALTERS, "abstract": "Full abstract"}, ""),
+    })
+    first = ReferenceLookupAdapter(http=first_http, scholar_cache=cache).lookup(pair(WALTERS_REF))
+    assert first.abstract_source == "semantic_scholar"
+    assert first_http.calls
+
+    second_http = FakeHttp({"search/match": (429, None, "HTTP 429")})
+    renumbered_ref = WALTERS_REF.replace("[1]", "[42]", 1)
+    second = ReferenceLookupAdapter(http=second_http, scholar_cache=cache).lookup(pair(renumbered_ref, 42))
+    assert second_http.calls == []
+    assert second.ref_number == 42
+    assert second.abstract == first.abstract
+    assert second.abstract_source == "semantic_scholar"
+    assert "沿用" in second.source_note
+
+
+def test_openalex_backup_does_not_prevent_trying_scholar_again_next_run() -> None:
+    cache = {}
+    missing = FakeHttp({
+        "search/match": (404, None, "HTTP 404"),
+        f"{OPENALEX_BASE}/works": (
+            200,
+            {"results": [{"display_name": ISIK, "abstract_inverted_index": {"Excerpt": [0]}}]},
+            "",
+        ),
+    })
+    first = ReferenceLookupAdapter(http=missing, scholar_cache=cache).lookup(pair(ISIK_REF, 2))
+    assert first.abstract_source == "openalex"
+    assert not cache
+
+    available = FakeHttp({ISIK: (200, {"data": [{"title": ISIK, "abstract": "Full abstract"}]}, "")})
+    second = ReferenceLookupAdapter(http=available, scholar_cache=cache).lookup(pair(ISIK_REF, 2))
+    assert available.calls == [f"{S2_BASE}/paper/search/match"]
+    assert second.abstract_source == "semantic_scholar"
+    assert second.abstract == "Full abstract"
+
+
+def test_w3c_uses_the_historical_official_abstract_for_the_access_date() -> None:
+    history = "https://www.w3.org/standards/history/vc-overview-1.0/"
+    historical = "https://www.w3.org/TR/2024/NOTE-vc-overview-20240706/"
+    ref = '[1] "Verifiable Credentials Overview," W3C. Accessed: Aug. 9, 2024. https://www.w3.org/TR/vc-overview/'
+    http = FakeHttp({
+        history: (200, {"html": f'<a href="{historical}">July</a>'
+                                '<a href="/TR/2024/NOTE-vc-overview-20240919/">September</a>'}, ""),
+        historical: (200, {"html": '<h1>Verifiable Credentials Overview</h1>'
+                                   '<section id="abstract"><h2>Abstract</h2><p>The official summary.</p></section>'
+                                   '<section><p>Full text must stay out of the evidence.</p></section>'}, ""),
+    })
+    result = ReferenceLookupAdapter(http=http).lookup(pair(ref))
+    assert http.calls == [history, historical]
+    assert result.abstract == "The official summary."
+    assert result.abstract_source == "W3C"
+    assert result.abstract_url == historical
+
+
+def test_w3c_does_not_substitute_a_different_edition() -> None:
+    url = "https://www.w3.org/TR/vc-data-model/"
+    ref = f'[1] "Verifiable Credentials Data Model v1.1," W3C. {url}'
+    http = FakeHttp({url: (200, {"html": '<h1>Verifiable Credentials Data Model v2.0</h1>'
+                                         '<section id="abstract"><p>Different edition.</p></section>'}, "")})
+    result = ReferenceLookupAdapter(http=http).lookup(pair(ref))
+    assert result.source_status is SourceStatus.LOOKUP_FAILED
+    assert not result.abstract
+    assert http.calls == [url]
+
+
+def test_w3c_abstract_marked_by_heading_stops_at_the_next_section_heading() -> None:
+    url = "https://www.w3.org/TR/2021/REC-webauthn-2-20210408/"
+    title = "Web Authentication - Level 2"
+    html = (
+        f"<h1>{title}</h1>"
+        '<h2 class="heading" id="abstract"><span>Abstract</span></h2>'
+        "<p>The first abstract paragraph.</p><p>The second abstract paragraph.</p>"
+        '<h2 id="sotd">Status of This Document</h2><p>Text outside the abstract.</p>'
+    )
+    http = FakeHttp({url: (200, {"html": html}, "")})
+
+    result = ReferenceLookupAdapter(http=http).lookup(pair(f'[1] "{title}," W3C. {url}'))
+
+    assert result.source_status is SourceStatus.GOT_ABSTRACT
+    assert result.abstract == "The first abstract paragraph. The second abstract paragraph."
+    assert result.abstract_source == "W3C"
+    assert http.calls == [url]
 
 
 def test_no_doi_no_title() -> None:
@@ -154,6 +692,27 @@ def test_no_doi_no_title() -> None:
 
 def test_rebuild_openalex_abstract() -> None:
     assert rebuild_openalex_abstract({"b": [1], "a": [0, 2]}) == "a b a"
+
+
+@pytest.mark.parametrize("index", [{"missing": [0, 2]}, {"one": [0], "conflict": [0]}])
+def test_openalex_rejects_corrupt_abstract_indexes(index) -> None:
+    assert rebuild_openalex_abstract(index) == ""
+
+
+def test_official_abstract_replaces_a_different_scholar_abstract() -> None:
+    doi = "10.18653/v1/2020.emnlp-main.900"
+    title = "A paper with an official abstract"
+    ref = f'[1] A. Author, "{title}," doi: {doi}.'
+    html = (f'<meta name="citation_doi" content="{doi}"><meta name="citation_title" content="{title}">'
+            '<div class="acl-abstract"><p>The complete abstract includes the result.</p></div>')
+    http = FakeHttp({
+        f"{S2_BASE}/paper/ACL:": (200, {"title": title, "abstract": "The complete abstract."}, ""),
+        "https://aclanthology.org/": (200, {"html": html}, ""),
+    })
+    result = ReferenceLookupAdapter(http=http).lookup(pair(ref))
+    assert result.abstract == "The complete abstract includes the result."
+    assert result.abstract_source == "ACL Anthology"
+    assert "文字不同，採用官方摘要" in result.source_note
 
 
 # ---------- 與陳造翊的流程串接 ----------
@@ -185,10 +744,22 @@ def test_arxiv_id_is_extracted() -> None:
 
 
 def test_lookup_by_arxiv_id_when_there_is_no_doi() -> None:
-    http = FakeHttp({"ARXIV:2511.16198": (200, {"title": "SemanticCite", "abstract": "ARXIV ABS"}, "")})
+    title = extract_reference_metadata(ARXIV_REF).title
+    http = FakeHttp({"ARXIV:2511.16198": (200, {"title": title, "abstract": "ARXIV ABS"}, "")})
     result = ReferenceLookupAdapter(http=http).lookup(pair(ARXIV_REF, 7))
     assert result.abstract == "ARXIV ABS"
     assert result.source_status is SourceStatus.GOT_ABSTRACT
+
+
+def test_throttled_fallback_rejects_a_record_with_the_wrong_doi() -> None:
+    http = FakeHttp({
+        f"{S2_BASE}/paper/": (429, None, "HTTP 429"),
+        CROSSREF_BASE: (200, {"message": {"DOI": "10.1038/wrong", "title": [WALTERS], "abstract": "Wrong work"}}, ""),
+    })
+    result = ReferenceLookupAdapter(http=http).lookup(pair(WALTERS_REF))
+    assert result.source_status is SourceStatus.LOOKUP_FAILED
+    assert not result.abstract
+    assert "DOI 缺少或與書目不符" in result.error_message
 
 
 def test_arxiv_only_reference_is_still_queryable() -> None:

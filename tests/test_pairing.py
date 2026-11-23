@@ -4,6 +4,17 @@ from src.reference_parser import parse_reference_list
 from src.schemas import ReferenceMatchStatus
 
 
+def test_pdf_single_line_wraps_preserve_the_whole_claim() -> None:
+    claim = (
+        "To enable secure and\n"
+        "password-free authentication, researchers should adopt FIDO2/WebAuthn\n"
+        "standards [79]."
+    )
+    pairs = build_citation_pairs(claim, '[79] "Device onboarding overview," FIDO Alliance.')
+    assert len(pairs) == 1
+    assert pairs[0].claim_text == " ".join(claim.split())
+
+
 def test_parses_multiline_reference_entries() -> None:
     text = """[1] First title,
 continued on a second line.
@@ -42,6 +53,22 @@ def test_same_source_in_two_claims_produces_two_traceable_pairs() -> None:
     assert pairs[0].claim_text == "First claim [1]."
     assert pairs[1].claim_text == "Second claim [1]."
     assert pairs[0].pair_id != pairs[1].pair_id
+
+
+def test_pairs_separately_cited_clauses_with_their_own_claims() -> None:
+    text = (
+        "BERT uses bidirectional pre-training to learn language representations [1]. "
+        "SciBERT extends BERT-based pre-training to scientific text [2], while Sentence-BERT "
+        "produces sentence embeddings for semantic similarity search [3]."
+    )
+    refs = "\n".join(f"[{number}] Source {number}." for number in range(1, 4))
+    pairs = build_citation_pairs(text, refs)
+    assert [(p.ref_number, p.claim_text) for p in pairs] == [
+        (1, "BERT uses bidirectional pre-training to learn language representations [1]."),
+        (2, "SciBERT extends BERT-based pre-training to scientific text [2]"),
+        (3, "Sentence-BERT produces sentence embeddings for semantic similarity search [3]."),
+    ]
+    assert [p.is_compound for p in pairs] == [False, True, True]
 
 
 def test_no_numeric_citations_returns_no_pairs() -> None:

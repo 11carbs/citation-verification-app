@@ -1,12 +1,14 @@
 import pandas as pd
 
 from src.mock_data import mock_analysis_rows
+from src.pairing import build_citation_pairs
 from src.presentation import (
     OUTPUT_COLUMNS,
     build_output_dataframe,
     dataframe_to_csv_bytes,
     support_band_style,
 )
+from src.schemas import AnalysisRow
 
 
 def test_output_table_has_one_row_per_reference() -> None:
@@ -27,7 +29,7 @@ def test_output_table_has_fixed_method_a_and_b_columns() -> None:
 def test_method_b_columns_are_blank_before_integration() -> None:
     frame = build_output_dataframe(mock_analysis_rows())
     assert frame["方法 B 支持分數"].isna().all()
-    assert (frame["方法 B 證據層級"] == "").all()
+    assert (frame["方法 B 判斷依據"] == "").all()
     assert (frame["方法 B 證據層級"] == "").all()
 
 
@@ -52,4 +54,22 @@ def test_csv_export_has_bom_header_and_one_line_per_row() -> None:
     parsed = pd.read_csv(pd.io.common.StringIO(decoded))
     assert parsed.columns.tolist() == OUTPUT_COLUMNS
     assert len(parsed) == 4
+
+
+def test_csv_preserves_original_sentence_for_separately_cited_clauses() -> None:
+    original = (
+        "BERT uses bidirectional pre-training [1], "
+        "while SciBERT is pretrained on scientific text [2]."
+    )
+    pairs = build_citation_pairs(original, '[1] "BERT."\n[2] "SciBERT."')
+    frame = build_output_dataframe([AnalysisRow(pair) for pair in pairs])
+    decoded = dataframe_to_csv_bytes(frame).decode("utf-8-sig")
+    exported = pd.read_csv(pd.io.common.StringIO(decoded), keep_default_na=False)
+
+    assert exported["引用陳述"].tolist() == [original, original]
+    assert list(zip(exported["ref 編號"], exported["查核子主張"])) == [
+        (1, "BERT uses bidirectional pre-training [1]"),
+        (2, "SciBERT is pretrained on scientific text [2]."),
+    ]
+    assert (exported["共引摘要涵蓋"] == "").all()
 

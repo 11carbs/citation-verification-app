@@ -89,3 +89,62 @@ def test_abbreviations_do_not_split_sentences() -> None:
 def test_blank_line_still_separates_paragraphs() -> None:
     claims = extract_claim_citations("First paragraph [1]\n\nSecond paragraph [2].")
     assert [c.claim_text for c in claims] == ["First paragraph [1]", "Second paragraph [2]."]
+
+
+def test_clause_separation_keeps_adjacent_citations_and_ranges_together() -> None:
+    claims = extract_claim_citations("A lowered error [1], [2]; B increased recall [3]-[4].")
+    assert [claim.claim_text for claim in claims] == ["A lowered error [1], [2]", "B increased recall [3]-[4]."]
+    assert [[mention.ref_number for mention in claim.mentions] for claim in claims] == [[1, 2], [3, 4]]
+
+
+def test_ambiguous_citation_scope_keeps_the_sentence() -> None:
+    text = "A [1] increased recall, while B [2] improved precision."
+    claims = extract_claim_citations(text)
+    assert [claim.claim_text for claim in claims] == [text]
+
+
+def test_shared_terminal_citations_allow_independent_type_claims() -> None:
+    text = "ResNet and DenseNet are convolutional neural networks [2, 1]."
+    [claim] = extract_claim_citations(text)
+    assert claim.claim_text == text
+    assert claim.subclaims == (
+        "ResNet is a convolutional neural network.",
+        "DenseNet is a convolutional neural network.",
+    )
+    assert [item.ref_number for item in claim.mentions] == [2, 1]
+
+
+def test_shared_terminal_citations_split_explicit_complete_type_clauses() -> None:
+    text = "BERT is a language model, and SciBERT is a pretrained language model [1], [2]."
+    [claim] = extract_claim_citations(text)
+    assert claim.subclaims == ("BERT is a language model.", "SciBERT is a pretrained language model.")
+    assert [item.ref_number for item in claim.mentions] == [1, 2]
+
+
+def test_locally_cited_type_claims_keep_their_own_sources() -> None:
+    claims = extract_claim_citations(
+        "ResNet is a neural network [2], and DenseNet is a neural network [1]."
+    )
+    assert [claim.claim_text for claim in claims] == [
+        "ResNet is a neural network [2]",
+        "DenseNet is a neural network [1].",
+    ]
+    assert [[item.ref_number for item in claim.mentions] for claim in claims] == [[2], [1]]
+    assert all(not claim.subclaims for claim in claims)
+
+
+@pytest.mark.parametrize("text", [
+    "BERT and SciBERT are pretrained language models [1].",
+    "BERT and SciBERT are pretrained language models [1], [2]?",
+    "BERT and SciBERT are jointly trained models [1], [2].",
+    "BERT [1] and SciBERT [2] are pretrained language models.",
+    "BERT and SciBERT are better models than GPT [1], [2].",
+    "BERT and SciBERT cause different effects when fine-tuned [1], [2].",
+    "BERT [1], and SciBERT is a pretrained language model [2].",
+    "BERT uses one procedure during training [1], while using a different one during inference [2].",
+    "Existing solutions utilize W3C [47], [110] standards for VCs, VP generation, and revocation.",
+])
+def test_shared_scope_does_not_rewrite_other_sentences(text: str) -> None:
+    [claim] = extract_claim_citations(text)
+    assert claim.claim_text == text
+    assert not claim.subclaims
