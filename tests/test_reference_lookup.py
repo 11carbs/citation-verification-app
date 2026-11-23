@@ -516,6 +516,84 @@ def test_openalex_backup() -> None:
     assert result.abstract_source == "openalex"
 
 
+@pytest.mark.parametrize(("ref", "candidate_title", "author", "year", "expected_note"), [
+    pytest.param(
+        '[1] I. Beltagy et al., "SciBERT: A Pretrained Language Model for Scientific Texts," '
+        "EMNLP, 2019. Accessed: Nov. 23, 2026.",
+        "SciBERT: A Pretrained Language Model for Scientific Text", "Iz Beltagy", 2019,
+        "採用近似篇名", id="accept-title-variant",
+    ),
+    pytest.param(
+        '[1] I. Beltagy, "SciBERT: A Pretrained Language Model for Scientific Texts," EMNLP, 2019.',
+        "SciBERT: A Pretrained Language Model for Scientific Text", "A. Beltagy", 2019,
+        "無法核對第一作者", id="reject-different-given-initial",
+    ),
+    pytest.param(
+        '[1] "SciBERT: A Pretrained Language Model for Scientific Texts," EMNLP, 2019.',
+        "SciBERT: A Pretrained Language Model for Scientific Text", "Iz Beltagy", 2019,
+        "無法核對第一作者", id="reject-without-cited-author",
+    ),
+    pytest.param(
+        '[1] I. Beltagy, "SciBERT: A Pretrained Language Model for Scientific Texts," EMNLP, 2019.',
+        "SciBERT: A Pretrained Language Model for Scientific Text", "Iz Beltagy", 2020,
+        "出版年與書目不符", id="reject-different-year",
+    ),
+    pytest.param(
+        '[1] I. Beltagy, "SciBERT: A Pretrained Language Model for Scientific Texts," EMNLP, 2019.',
+        "SciBERT: A Pretrained Language Model for Scientific Text", "Iz Beltagy", None,
+        "缺少年份", id="reject-missing-candidate-year",
+    ),
+    pytest.param(
+        '[1] M. Sporny et al., "Verifiable Credentials Data Model 1.0."',
+        "Verifiable Credentials Data Model v1.1", "Manu Sporny", 2022,
+        "版本與書目不符", id="reject-different-version-without-cited-year",
+    ),
+    pytest.param(
+        '[1] I. Beltagy, "SciBERT: A Pretrained Language Model for Scientific Text," EMNLP, 2019.',
+        "SciBERT: A Pretrained Language Model for Science", "Iz Beltagy", 2019,
+        "篇名不符", id="reject-below-095",
+    ),
+])
+def test_openalex_title_variant_without_doi(ref, candidate_title, author, year, expected_note) -> None:
+    work = {
+        "display_name": candidate_title,
+        "publication_year": year,
+        "authorships": [{"author_position": "first", "author": {"display_name": author}}],
+        "abstract_inverted_index": {"Candidate": [0], "abstract": [1]},
+    }
+    http = FakeHttp({
+        "search/match": (429, None, "HTTP 429"),
+        f"{OPENALEX_BASE}/works": (200, {"results": [work]}, ""),
+    })
+    result = ReferenceLookupAdapter(openalex_key="k", http=http).lookup(pair(ref))
+
+    assert http.calls == [f"{S2_BASE}/paper/search/match", f"{OPENALEX_BASE}/works"]
+    assert expected_note in result.source_note
+    if expected_note == "採用近似篇名":
+        assert result.abstract_source == "openalex"
+        assert result.abstract == "Candidate abstract"
+    else:
+        assert result.abstract == ""
+
+
+def test_openalex_rejects_two_verified_title_variants_without_doi() -> None:
+    ref = '[1] A. Rivera, "Evaluating citations with large language models," J., 2026.'
+    works = [
+        {"display_name": title, "publication_year": 2026,
+         "authorships": [{"raw_author_name": "Alma Rivera"}],
+         "abstract_inverted_index": {"Abstract": [0]}}
+        for title in (
+            "Evaluating citation with large language models",
+            "Evaluating citations with a large language model",
+        )
+    ]
+    http = FakeHttp({f"{OPENALEX_BASE}/works": (200, {"results": works}, "")})
+    result = ReferenceLookupAdapter(openalex_key="k", http=http).lookup(pair(ref))
+
+    assert result.abstract == ""
+    assert "多筆相符紀錄" in result.source_note
+
+
 def test_same_paper_reuses_scholar_abstract_across_runs_even_if_reference_number_changes() -> None:
     cache = {}
     first_http = FakeHttp({

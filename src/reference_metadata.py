@@ -26,6 +26,8 @@ _ARXIV_RE = re.compile(
     r"(?P<id>\d{4}\.\d{4,5}(?:v\d+)?|[a-z-]+(?:\.[A-Z]{2})?/\d{7}(?:v\d+)?)",
     re.IGNORECASE,
 )
+_REFERENCE_TAIL_RE = re.compile(r"\b(?:accessed\s*:|available\s*:|doi\s*:|https?://)", re.IGNORECASE)
+_YEAR_RE = re.compile(r"(?<![\w./–—-])(?:19|20)\d{2}(?=\s*(?:[,.;)\]]|$))")
 _URLISH_START_RE = re.compile(
     r"^(https?://|www\.|doi\.org|dx\.doi\.org|10\.\d{4,9}/)", re.IGNORECASE
 )
@@ -46,6 +48,8 @@ class ReferenceMetadata:
     url: str = ""
     arxiv_id: str = ""
     parse_note: str = ""
+    first_author: str = ""
+    publication_year: int | None = None
 
     @property
     def has_identifier(self) -> bool:
@@ -107,6 +111,15 @@ def extract_reference_metadata(ref_raw: str) -> ReferenceMetadata:
     url_match = _URL_RE.search(body)
     arxiv_match = _ARXIV_RE.search(body)
     title = _clean(title_match.group(title_match.lastgroup)) if title_match else ""
+    first_author = ""
+    publication_year = None
+    if title_match:
+        byline = body[:title_match.start()]
+        first_author = re.split(r",|\s+and\s+|\s+et\s+al\.?", byline, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+        publication_text = _REFERENCE_TAIL_RE.split(body[title_match.end():], maxsplit=1)[0]
+        years = set(_YEAR_RE.findall(publication_text))
+        if len(years) == 1:
+            publication_year = int(years.pop())
     arxiv_id = _clean(arxiv_match.group("id")) if arxiv_match else ""
     notes = []
     if not title:
@@ -119,4 +132,6 @@ def extract_reference_metadata(ref_raw: str) -> ReferenceMetadata:
         url=_clean(url_match.group(0)) if url_match else "",
         arxiv_id=arxiv_id,
         parse_note="；".join(notes),
+        first_author=first_author,
+        publication_year=publication_year,
     )

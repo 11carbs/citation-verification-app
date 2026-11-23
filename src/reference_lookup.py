@@ -29,6 +29,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from email.utils import parsedate_to_datetime
+import re
 from threading import Lock
 import time
 from typing import Protocol
@@ -51,7 +52,7 @@ CROSSREF_BASE = "https://api.crossref.org/works"
 EUROPE_PMC_SEARCH = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
 S2_FIELDS = "title,abstract,externalIds"
 S2_ARXIV_PREFIX = "ARXIV:"
-OPENALEX_SELECT = "id,doi,display_name,abstract_inverted_index,authorships,locations"
+OPENALEX_SELECT = "id,doi,display_name,abstract_inverted_index,authorships,locations,publication_year"
 ARXIV_DOI_PREFIX = "10.48550/arxiv."
 DEFAULT_RETRY_AFTER = 8.0
 _S2_HOST = urlsplit(S2_BASE).netloc
@@ -65,6 +66,12 @@ _TRACE_HEADERS = {
 }
 
 TITLE_MATCH = 0.90  # 用篇名查到的論文，篇名相似度要到這個門檻才算同一篇
+OPENALEX_TITLE_VARIANT_MATCH = 0.95
+_TITLE_VERSION = re.compile(
+    r"\bv(?:ersion)?\.?\s*(\d+(?:\.\d+)*)\b|(?<![\w.])(\d+\.\d+(?:\.\d+)*)\s*\)?$",
+    re.IGNORECASE,
+)
+_AUTHOR_INITIALS = re.compile(r"^(?:[^\W\d_]\.\s*)+")
 
 # (HTTP status, JSON, error text); status None means the request never succeeded.
 HttpResult = tuple[int | None, dict | None, str]
@@ -98,6 +105,33 @@ def _author_names(names: list[str]) -> tuple[str, ...]:
     """Ignore name punctuation and given/family order, keeping the author order."""
     normalized = tuple(" ".join(sorted(normalize_title(name).split())) for name in names)
     return normalized if all(normalized) else ()
+
+
+def _first_author_matches(cited: str, indexed: object) -> bool:
+    """Match full names and IEEE forms such as 'J. Devlin'."""
+    cited_parts = normalize_title(cited).split()
+    indexed_parts = normalize_title(indexed).split()
+    if len(cited_parts) < 2 or len(indexed_parts) < 2 or len(cited_parts[-1]) < 2:
+        return False
+    if cited_parts == indexed_parts:
+        return True
+    prefix = _AUTHOR_INITIALS.match(cited)
+    if prefix is None:
+        return False
+    initials = normalize_title(prefix[0]).split()
+    family = cited_parts[len(initials):]
+    if not family:
+        return False
+    given = indexed_parts[:-len(family)]
+    return (
+        family == indexed_parts[-len(family):]
+        and len(given) >= len(initials)
+        and all(initial == part[0] for initial, part in zip(initials, given))
+    )
+
+
+def _title_versions(title: str) -> set[str]:
+    return {explicit or trailing for explicit, trailing in _TITLE_VERSION.findall(title)}
 
 
 def _openalex_arxiv_ids(work: dict) -> set[str]:
@@ -609,6 +643,26 @@ class _Lookup:
         return None
 
     # ---- OpenAlex ----
+    def _verify_openalex_title_variant(self, work: dict, name: str) -> bool:
+        if _title_versions(self.meta.title) != _title_versions(name):
+            self.notes.append(f"OpenAlex 近似篇名的版本與書目不符或缺少版本（「{name}」）")
+            return False
+        year = self.meta.publication_year
+        if year is not None and work.get("publication_year") != year:
+            self.notes.append(f"OpenAlex 近似篇名的出版年與書目不符或缺少年份（「{name}」）")
+            return False
+        authorships = _records(work.get("authorships"))
+        first = authorships[0] if authorships else {}
+        raw_name = first.get("raw_author_name")
+        indexed_name = _record(first.get("author")).get("display_name")
+        if first.get("author_position") in (None, "first") and (
+            _first_author_matches(self.meta.first_author, raw_name)
+            or _first_author_matches(self.meta.first_author, indexed_name)
+        ):
+            return True
+        self.notes.append(f"OpenAlex 近似篇名無法核對第一作者（「{name}」）")
+        return False
+
     def openalex(self) -> dict | None:
         if not self.openalex_key:
             self.notes.append("沒有 OpenAlex 金鑰，仍嘗試查詢（每日 100 credits 上限）")
@@ -632,6 +686,7 @@ class _Lookup:
             if code == 200 and isinstance(data, dict) and data:
                 candidates = [data] if how == "DOI" else _records(data.get("results"))
             matches = []
+            variants = []
             for work in candidates:
                 name = work.get("display_name") or ""
                 similarity = title_similarity(self.meta.title, name)
@@ -642,9 +697,15 @@ class _Lookup:
                     continue
                 threshold = TITLE_MATCH if doi else 1.0
                 if self.meta.title and similarity < threshold:
+                    if not doi and similarity >= OPENALEX_TITLE_VARIANT_MATCH:
+                        if self._verify_openalex_title_variant(work, name):
+                            variants.append(work)
+                        continue
                     self.notes.append(f"OpenAlex 用{how}找到的篇名不符（「{name}」）")
                     continue
                 matches.append(work)
+            using_variant = not matches and bool(variants)
+            matches = matches or variants
             if len(matches) > 1:
                 self.notes.append(f"OpenAlex 用{how}找到多筆相符紀錄，無法唯一確認來源")
                 self.had_error = True
@@ -665,7 +726,11 @@ class _Lookup:
                     continue
                 if not self._usable_abstract(abstract, "OpenAlex"):
                     continue
-                self.notes.append(f"OpenAlex 用{how}找到相符紀錄")
+                if using_variant:
+                    similarity = title_similarity(self.meta.title, work.get("display_name") or "")
+                    self.notes.append(f"OpenAlex 採用近似篇名（{similarity:.3f}），已核對第一作者及可用的出版年和版本")
+                else:
+                    self.notes.append(f"OpenAlex 用{how}找到相符紀錄")
                 self._note_indexed_abstract(abstract, "OpenAlex")
                 return self._result(SourceStatus.GOT_ABSTRACT, abstract, "openalex", work.get("id") or url)
             if code in (200, 404) and not candidates:
