@@ -58,6 +58,12 @@ def _decode(data: bytes) -> str:
     raise ConversionError("TEXT_ENCODING", "文字編碼無法辨識，請另存 UTF-8。")
 
 
+def convert_pasted_paper(text: str) -> ConvertedDocument:
+    """Treat a pasted full paper as Markdown text through the common converter."""
+    data = text.encode("utf-8") if text.strip() else b""
+    return convert_document(data, "pasted-paper.md")
+
+
 def convert_document(data: bytes, filename: str) -> ConvertedDocument:
     """Common entry point for both the input paper and cited source documents.
 

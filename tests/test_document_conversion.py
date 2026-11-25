@@ -1,6 +1,8 @@
 from io import BytesIO
 import pytest
-from src.document_conversion import ConversionError, conversion_capabilities, convert_document
+from src.document_conversion import (
+    ConversionError, conversion_capabilities, convert_document, convert_pasted_paper,
+)
 from src.document_handoff import CitationHandoff, ReferenceCandidate
 
 
@@ -28,6 +30,22 @@ def test_docx_order_and_table():
     result = convert_document(stream.getvalue(), "paper.docx")
     assert result.markdown.index("# Study") < result.markdown.index("Claim [1]") < result.markdown.index("Evidence")
     assert "| Evidence |" in result.markdown
+
+
+def test_pasted_full_paper_uses_same_markdown_conversion_as_upload():
+    text = "# Study\n\nClaim (Wang, 2024).\n\n## References\nWang (2024). Source."
+    pasted = convert_pasted_paper(text)
+    uploaded = convert_document(text.encode("utf-8"), "study.md")
+    assert pasted.markdown == uploaded.markdown
+    assert pasted.document_id == uploaded.document_id
+    assert pasted.source_format == "md"
+    assert "## References" in pasted.markdown
+
+
+def test_blank_paste_returns_explicit_error():
+    with pytest.raises(ConversionError) as error:
+        convert_pasted_paper(" \n\t ")
+    assert error.value.code == "EMPTY_FILE"
 
 
 def test_pdf_positions_and_empty_page_warning():
