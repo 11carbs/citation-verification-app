@@ -8,6 +8,7 @@
 共用入口：`convert_document(data: bytes, filename: str) -> ConvertedDocument`。
 支援副檔名 PDF、DOCX、HTML、XML、MD、TXT，單檔上限 30 MiB。舊版 DOC 不支援；請另存為 DOCX。
 來源論文與被引全文可共用本入口；第二人另負責來源取得與證據檢索。
+第二階段也保留「貼上論文全文」入口；文字輸入需先進同一份 Markdown／結構資料，再交給引用抽取器。現有首頁的 IEEE 段落＋手貼 ref 仍屬第一階段，不表示整篇自動配對或所有引用樣式已完成。
 
 `ConvertedDocument.to_dict()` 輸出 schema_version=document.v1，包含 document_id、filename、source_format、markdown、blocks、warnings、converter。
 每個 block 有 block_id、markdown、locator、page、bbox。非 PDF 不虛構頁碼。
