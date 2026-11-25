@@ -241,6 +241,11 @@ def _claim_citations(
     )
 
 
+def split_claim_segments(text: str) -> list[str]:
+    """Return sentence-like claim segments for numeric and author-year parsers."""
+    return _split_claim_segments(text)
+
+
 def _split_claim_segments(text: str) -> list[str]:
     """Split into sentence-like segments.
 
