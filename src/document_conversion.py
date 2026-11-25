@@ -7,11 +7,8 @@ from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
 import re
-import shutil
-import subprocess
-import tempfile
 
-SUPPORTED_EXTENSIONS = ("pdf", "docx", "doc", "html", "xml", "md", "txt")
+SUPPORTED_EXTENSIONS = ("pdf", "docx", "html", "xml", "md", "txt")
 MAX_BYTES = 30 * 1024 * 1024
 
 
@@ -45,20 +42,8 @@ class ConvertedDocument:
         return asdict(self)
 
 
-def find_libreoffice() -> str | None:
-    for name in ("soffice", "libreoffice"):
-        if executable := shutil.which(name):
-            return executable
-    for path in (r"C:\Program Files\LibreOffice\program\soffice.exe",
-                 r"C:\Program Files (x86)\LibreOffice\program\soffice.exe"):
-        if Path(path).is_file():
-            return path
-    return None
-
-
 def conversion_capabilities() -> dict:
     return {"extensions": list(SUPPORTED_EXTENSIONS), "max_bytes": MAX_BYTES,
-            "doc_ready": find_libreoffice() is not None,
             "ocr_available": False}
 
 
@@ -73,30 +58,6 @@ def _decode(data: bytes) -> str:
     raise ConversionError("TEXT_ENCODING", "文字編碼無法辨識，請另存 UTF-8。")
 
 
-def _doc_to_docx(data: bytes) -> bytes:
-    executable = find_libreoffice()
-    if not executable:
-        raise ConversionError("DOC_DEPENDENCY_MISSING", "DOC 需要 LibreOffice；此環境尚未安裝。可先另存 DOCX。")
-    if not data.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
-        raise ConversionError("INVALID_DOC", "不是可辨識的 Word 二進位 DOC，請另存 DOCX。")
-    with tempfile.TemporaryDirectory(prefix="citation-doc-") as temp:
-        root = Path(temp)
-        source = root / "input.doc"
-        source.write_bytes(data)
-        try:
-            result = subprocess.run(
-                [executable, f"-env:UserInstallation={(root / 'profile').as_uri()}",
-                 "--headless", "--norestore", "--convert-to", "docx", "--outdir", str(root), str(source)],
-                capture_output=True, timeout=60, check=False,
-            )
-        except subprocess.TimeoutExpired as error:
-            raise ConversionError("DOC_TIMEOUT", "DOC 轉換逾時，請另存 DOCX。") from error
-        output = root / "input.docx"
-        if result.returncode != 0 or not output.is_file():
-            raise ConversionError("DOC_CONVERSION_FAILED", "LibreOffice 未能轉換 DOC，請檢查檔案。")
-        return output.read_bytes()
-
-
 def convert_document(data: bytes, filename: str) -> ConvertedDocument:
     """Common entry point for both the input paper and cited source documents.
 
@@ -105,7 +66,7 @@ def convert_document(data: bytes, filename: str) -> ConvertedDocument:
     """
     extension = Path(filename).suffix.lower().lstrip(".")
     if extension not in SUPPORTED_EXTENSIONS:
-        raise ConversionError("UNSUPPORTED_FORMAT", "支援 PDF、DOCX、DOC、HTML、XML、MD、TXT。")
+        raise ConversionError("UNSUPPORTED_FORMAT", "支援 PDF、DOCX、HTML、XML、MD、TXT。")
     if not data:
         raise ConversionError("EMPTY_FILE", "檔案是空的。")
     if len(data) > MAX_BYTES:
@@ -133,12 +94,12 @@ def convert_document(data: bytes, filename: str) -> ConvertedDocument:
                     if len(blocks) == before:
                         warnings.append(f"第 {page_number} 頁無可擷取文字，可能需要 OCR。")
             warnings.append("PDF 採文字區塊抽取；多欄順序、表格與公式需人工核對，未執行 OCR。")
-        elif extension in ("doc", "docx"):
+        elif extension == "docx":
             from docx import Document
             from docx.table import Table
             from docx.text.paragraph import Paragraph
-            converter = "libreoffice-docx/python-docx-v1" if extension == "doc" else "python-docx-v1"
-            document = Document(BytesIO(_doc_to_docx(data) if extension == "doc" else data))
+            converter = "python-docx-v1"
+            document = Document(BytesIO(data))
             for number, item in enumerate(document.iter_inner_content(), 1):
                 if isinstance(item, Paragraph):
                     text = item.text
@@ -152,7 +113,7 @@ def convert_document(data: bytes, filename: str) -> ConvertedDocument:
                         lines = ["| " + " | ".join(row) + " |" for row in rows]
                         lines.insert(1, "| " + " | ".join(["---"] * len(rows[0])) + " |")
                         add("\n".join(lines), f"body:{number}/table")
-            warnings.append("DOC/DOCX 本版讀取本文段落與表格；腳註、尾註及文字方塊尚未完整處理。")
+            warnings.append("DOCX 本版讀取本文段落與表格；腳註、尾註及文字方塊尚未完整處理。")
         elif extension == "html":
             from bs4 import BeautifulSoup
             from markdownify import markdownify

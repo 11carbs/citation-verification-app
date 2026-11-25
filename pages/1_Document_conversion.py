@@ -2,14 +2,12 @@
 import json
 import streamlit as st
 from src.document_conversion import (
-    SUPPORTED_EXTENSIONS, ConversionError, conversion_capabilities, convert_document,
+    SUPPORTED_EXTENSIONS, ConversionError, convert_document,
 )
 
 st.set_page_config(page_title="論文轉 Markdown", layout="wide")
 st.title("論文輸入與 Markdown 轉換")
 st.caption("轉換工作區：本頁尚未自動抽取引用或呼叫模型。")
-if not conversion_capabilities()["doc_ready"]:
-    st.info("此環境未安裝 LibreOffice，DOC 暫時無法轉換；其餘格式可測試。")
 uploaded = st.file_uploader("上傳待查核論文（30 MiB 以下）", type=list(SUPPORTED_EXTENSIONS))
 if uploaded is not None:
     try:

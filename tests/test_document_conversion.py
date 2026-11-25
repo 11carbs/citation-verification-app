@@ -1,8 +1,6 @@
 from io import BytesIO
-import subprocess
-from pathlib import Path
 import pytest
-from src.document_conversion import ConversionError, convert_document
+from src.document_conversion import ConversionError, conversion_capabilities, convert_document
 from src.document_handoff import CitationHandoff, ReferenceCandidate
 
 
@@ -52,27 +50,11 @@ def test_image_only_pdf_is_not_empty_success():
     assert error.value.code == "NO_EXTRACTABLE_TEXT"
 
 
-def test_doc_dependency_error(monkeypatch):
-    monkeypatch.setattr("src.document_conversion.find_libreoffice", lambda: None)
+def test_supported_formats_exclude_legacy_doc():
+    assert conversion_capabilities()["extensions"] == ["pdf", "docx", "html", "xml", "md", "txt"]
     with pytest.raises(ConversionError) as error:
-        convert_document(b"not a real doc", "paper.doc")
-    assert error.value.code == "DOC_DEPENDENCY_MISSING"
-
-
-def test_doc_conversion_contract_with_simulated_executable(monkeypatch):
-    from docx import Document
-    monkeypatch.setattr("src.document_conversion.find_libreoffice", lambda: "soffice")
-    def run(command, **kwargs):
-        assert kwargs["timeout"] == 60
-        assert "--headless" in command
-        root = Path(command[-1]).parent
-        doc = Document()
-        doc.add_paragraph("Converted [1].")
-        doc.save(root / "input.docx")
-        return subprocess.CompletedProcess(command, 0)
-    monkeypatch.setattr("src.document_conversion.subprocess.run", run)
-    result = convert_document(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"fixture", "paper.doc")
-    assert "Converted [1]" in result.markdown
+        convert_document(b"legacy Word file", "paper.doc")
+    assert error.value.code == "UNSUPPORTED_FORMAT"
 
 
 @pytest.mark.parametrize("name,data,code", [

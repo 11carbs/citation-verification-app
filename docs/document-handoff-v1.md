@@ -6,7 +6,7 @@
 ## 文件轉換
 
 共用入口：`convert_document(data: bytes, filename: str) -> ConvertedDocument`。
-支援副檔名 PDF、DOCX、DOC、HTML、XML、MD、TXT，單檔上限 30 MiB。
+支援副檔名 PDF、DOCX、HTML、XML、MD、TXT，單檔上限 30 MiB。舊版 DOC 不支援；請另存為 DOCX。
 來源論文與被引全文可共用本入口；第二人另負責來源取得與證據檢索。
 
 `ConvertedDocument.to_dict()` 輸出 schema_version=document.v1，包含 document_id、filename、source_format、markdown、blocks、warnings、converter。
@@ -32,20 +32,10 @@ ref_id 為字串，不要求數字編號，以容納作者年份、註釋等引�
 
 第二人需要確認：欄位命名、ref_id／block_id 的保存方式、缺失及歧義狀態；確認後才將此契約視為定案。
 
-## DOC 與部署
-
-DOC 使用 LibreOffice headless 轉 DOCX，再讀取本文及表格；每次以獨立暫存目錄及 user profile 執行，逾時 60 秒。
-Community Cloud 的 packages.txt 已加入 libreoffice-writer；系統套件安裝方式參考：
-https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/app-dependencies
-
-本機未安裝 LibreOffice 時會回報 DOC_DEPENDENCY_MISSING。部署設定存在不代表雲端已安裝成功。
-部署驗收需：doc_ready=true、實際二進位 DOC 成功轉換、確認文字與引用標記保留、連續／並行轉換互不干擾。
-
 ## 本版限制
 
 - 本次僅完成文件轉換入口與契約，未做整篇引用／ref 抽取、作者年份配對或 OCR。
 - PDF 使用文字區塊抽取，保留 bbox／頁碼；多欄、表格、公式與掃描頁須檢查。沒有文字會回報錯誤，部分空白頁會警告。
-- DOCX/DOC 的腳註、尾註、文字方塊及精細字體標記尚未完整支援，不能宣稱已支援所有引用樣式。
+- DOCX 的腳註、尾註、文字方塊及精細字體標記尚未完整支援，不能宣稱已支援所有引用樣式。
 - HTML 轉 Markdown；XML 採結構化文字路徑，尚未針對各出版商 schema 完整轉換引用屬性。
 - TXT/MD 保留整份內容，尚未細分定位；Markdown 是統一文字表示，不保證版面重現。
-- DOC 目前含模擬程序測試；若未執行真實 LibreOffice 測試，測試結果不得記為真實 DOC 驗收。
