@@ -1,5 +1,11 @@
 # Citation Verification Prototype
 
+## 第二階段開發：文件轉換（開發分支）
+
+新增側欄「Document conversion」頁面，接收 PDF、DOCX、DOC、HTML、XML、MD、TXT，提供 Markdown 預覽與文件結構 JSON 下載。這是轉換基礎版，尚未自動抽取整篇引用，也尚未支援 OCR。
+DOC 需要 LibreOffice；Community Cloud 系統依賴見 packages.txt。真實 DOC 與雲端安裝需另行驗收，不能以模擬測試取代。
+與第二人的交接欄位提案及限制詳見 [文件交接契約](docs/document-handoff-v1.md)，尚待第二人確認。
+
 本專案是「未獲來源支持的引用」查核系統之第一階段 Streamlit 原型。
 
 - 公開網站：https://citation-verification-app-jygqm5a6pmbam39td59prx.streamlit.app/
