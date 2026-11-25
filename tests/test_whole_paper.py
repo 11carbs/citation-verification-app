@@ -201,3 +201,99 @@ def test_pdf_claim_and_reference_keep_page_and_box():
     assert pair.source_locations[0].bbox
     assert pair.reference.source_locations[0].page == 2
     assert pair.reference.source_locations[0].bbox
+
+
+def test_vancouver_parenthesized_numbers_and_superscript_numeric():
+    paper = ("One result (1, 2). Another result.^{2} Third result.¹\n\n"
+             "References\n1. A. Author, First source.\n2. B. Author, Second source.")
+    result = extract_whole_paper(convert_pasted_paper(paper))
+    assert [pair.reference.ref_id for pair in result.pairs] == [
+        "ref_n_1", "ref_n_2", "ref_n_2", "ref_n_1",
+    ]
+
+
+def test_html_superscript_bibliography_link_and_footnote():
+    html = ("<p>One result<sup><a href='#ref1'>1</a></sup>. "
+            "Another claim<sup><a href='#fn2'>2</a></sup>.</p>"
+            "<h2>References</h2><p id='ref1'>[1] A. Author, Source.</p>"
+            "<section class='footnotes'><ol><li id='fn2'>2. B. Author, Footnote source.</li></ol></section>")
+    converted = convert_document(html.encode(), "study.html")
+    result = extract_whole_paper(converted)
+    assert [pair.match_status for pair in result.pairs] == ["matched", "matched"]
+    assert [pair.reference.ref_id for pair in result.pairs] == ["ref_n_1", "ref_note_fn2"]
+    assert result.pairs[1].reference.source_locations[0].locator == "html:note:fn2"
+
+
+def test_jats_bibliography_xref_and_footnote_xref_keep_targets():
+    xml = ("<article><body><p>A finding <xref ref-type='bibr' rid='R1'>1</xref> "
+           "and a note <xref ref-type='fn' rid='fn1'>1</xref>.</p>"
+           "<fn-group><fn id='fn1'><p>C. Author, Footnote source.</p></fn></fn-group></body>"
+           "<ref-list><title>References</title><ref id='R1'><label>1</label>"
+           "<mixed-citation>A. Author, Main source.</mixed-citation></ref></ref-list></article>")
+    converted = convert_document(xml.encode(), "study.xml")
+    result = extract_whole_paper(converted)
+    assert [pair.reference.ref_id for pair in result.pairs] == ["ref_n_1", "ref_note_fn1"]
+    assert result.pairs[1].reference.source_locations[0].locator.endswith("/fn[1]")
+
+
+def test_math_exponent_and_equation_number_are_not_citations():
+    paper = ("The formula uses x^{2}, as in Eq. (1). A cited result.^{1}\n\n"
+             "References\n[1] A. Author, Source.")
+    result = extract_whole_paper(convert_pasted_paper(paper))
+    assert len(result.pairs) == 1
+    assert result.pairs[0].citation_marker == "^{1}"
+    assert result.pairs[0].match_status == "matched"
+
+
+def test_superscript_without_matching_reference_is_uncertain():
+    result = extract_whole_paper(convert_pasted_paper("A result.^{7}"))
+    assert result.pairs[0].match_status == "unparsed"
+
+
+def test_pdf_small_raised_number_is_preserved_as_citation_when_adjacent():
+    import pymupdf
+
+    pdf = pymupdf.open()
+    page = pdf.new_page()
+    page.insert_text((72, 72), "Claim.", fontsize=12)
+    page.insert_text((108, 66), "1", fontsize=6)
+    page.insert_text((72, 125), "References")
+    page.insert_text((72, 150), "[1] A. Author, Source.")
+    converted = convert_document(pdf.tobytes(), "raised.pdf")
+    assert "Claim.^{1}" in converted.markdown
+    result = extract_whole_paper(converted)
+    assert len(result.pairs) == 1
+    assert result.pairs[0].reference.ref_id == "ref_n_1"
+
+
+def test_jats_xref_with_hidden_label_uses_explicit_target_id():
+    xml = ("<article><body><p>A claim <xref ref-type='bibr' rid='R7'/></p></body>"
+           "<ref-list><title>References</title><ref id='R7'>"
+           "<mixed-citation>A. Author, Source.</mixed-citation></ref></ref-list></article>")
+    converted = convert_document(xml.encode(), "target.xml")
+    assert "[@R7]" in converted.markdown
+    result = extract_whole_paper(converted)
+    assert len(result.pairs) == 1
+    assert result.pairs[0].reference.ref_id == "ref_struct_R7"
+
+
+def test_html_ordered_reference_list_and_superscript_anchor():
+    html = ("<p>A result<sup><a href='#b1'>1</a></sup>.</p>"
+            "<h2>References</h2><ol><li id='b1'>A. Author, Source.</li></ol>")
+    result = extract_whole_paper(convert_document(html.encode(), "ordered.html"))
+    assert len(result.pairs) == 1
+    assert result.pairs[0].reference.ref_id == "ref_n_1"
+
+
+def test_numeric_range_and_year_suffix_journal_variants():
+    numeric = ("Several sources [1–3, 5].\n\nReferences\n"
+               "[1] Source one.\n[2] Source two.\n[3] Source three.\n[5] Source five.")
+    numeric_result = extract_whole_paper(convert_pasted_paper(numeric))
+    assert [pair.reference.ref_id for pair in numeric_result.pairs] == [
+        "ref_n_1", "ref_n_2", "ref_n_3", "ref_n_5",
+    ]
+    author = ("Wang et al. (2024a) reported a result.\n\nReferences\n"
+              "Wang, T., & Li, Y. (2024a). Study A.\nWang, T. (2024b). Study B.")
+    author_result = extract_whole_paper(convert_pasted_paper(author))
+    assert len(author_result.pairs) == 1
+    assert author_result.pairs[0].reference.ref_id == "ref_a_001"

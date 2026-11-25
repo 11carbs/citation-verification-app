@@ -1,9 +1,11 @@
 from io import BytesIO
+from zipfile import ZipFile
 import pytest
 from src.document_conversion import (
     ConversionError, conversion_capabilities, convert_document, convert_pasted_paper,
 )
 from src.document_handoff import CitationHandoff, ReferenceCandidate
+from src.whole_paper import extract_whole_paper
 
 
 @pytest.mark.parametrize("extension,content", [
@@ -32,6 +34,55 @@ def test_docx_order_and_table():
     assert "| Evidence |" in result.markdown
 
 
+def test_docx_superscript_and_note_parts_keep_markers_and_locations():
+    from docx import Document
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    doc = Document()
+    paragraph = doc.add_paragraph("A cited claim")
+    raised = paragraph.add_run("1,2")
+    raised.font.superscript = True
+    paragraph.add_run(" and a note")
+    footnote = paragraph.add_run()
+    footnote_ref = OxmlElement("w:footnoteReference")
+    footnote_ref.set(qn("w:id"), "2")
+    footnote._r.append(footnote_ref)
+    endnote = paragraph.add_run()
+    endnote_ref = OxmlElement("w:endnoteReference")
+    endnote_ref.set(qn("w:id"), "3")
+    endnote._r.append(endnote_ref)
+    source = BytesIO()
+    doc.save(source)
+    output = BytesIO()
+    with ZipFile(BytesIO(source.getvalue())) as original, ZipFile(output, "w") as written:
+        for item in original.infolist():
+            written.writestr(item, original.read(item.filename))
+        written.writestr("word/footnotes.xml", (
+            '<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            '<w:footnote w:id="2"><w:p><w:r><w:t>Footnote source.</w:t></w:r></w:p></w:footnote>'
+            '</w:footnotes>'
+        ))
+        written.writestr("word/endnotes.xml", (
+            '<w:endnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            '<w:endnote w:id="3"><w:p><w:r><w:t>Endnote source.</w:t></w:r></w:p></w:endnote>'
+            '</w:endnotes>'
+        ))
+    result = convert_document(output.getvalue(), "notes.docx")
+    assert "A cited claim^{1,2} and a note[^fn2][^en3]" in result.markdown
+    assert any(block.locator == "word:footnote:2" and "Footnote source" in block.markdown
+               for block in result.blocks)
+    assert any(block.locator == "word:endnote:3" and "Endnote source" in block.markdown
+               for block in result.blocks)
+    pairs = extract_whole_paper(result).pairs
+    assert [(pair.citation_marker, pair.match_status) for pair in pairs] == [
+        ("^{1,2}", "unparsed"), ("^{1,2}", "unparsed"),
+        ("[^fn2]", "matched"), ("[^en3]", "matched"),
+    ]
+    assert pairs[2].reference.source_locations[0].locator == "word:footnote:2"
+    assert pairs[3].reference.source_locations[0].locator == "word:endnote:3"
+
+
 def test_pasted_full_paper_uses_same_markdown_conversion_as_upload():
     text = "# Study\n\nClaim (Wang, 2024).\n\n## References\nWang (2024). Source."
     pasted = convert_pasted_paper(text)
@@ -57,6 +108,20 @@ def test_pdf_positions_and_empty_page_warning():
     assert result.blocks[0].page == 1
     assert result.blocks[0].bbox
     assert any("2" in warning and "OCR" in warning for warning in result.warnings)
+
+
+def test_pdf_two_column_text_is_present_with_position_warning():
+    import pymupdf
+
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 100), "Left column [1].")
+    page.insert_text((330, 100), "Right column [2].")
+    result = convert_document(doc.tobytes(), "columns.pdf")
+    assert "Left column [1]" in result.markdown
+    assert "Right column [2]" in result.markdown
+    assert all(block.page == 1 and block.bbox for block in result.blocks)
+    assert any("多欄順序" in warning for warning in result.warnings)
 
 
 def test_image_only_pdf_is_not_empty_success():

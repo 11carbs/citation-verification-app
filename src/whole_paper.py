@@ -52,10 +52,13 @@ class _Mention:
     marker: str
     start: int = 0
     number: int | None = None
+    note_key: str = ""
+    target_id: str = ""
     first_author: str = ""
     second_author: str = ""
     year: str = ""
     unparsed: bool = False
+    uncertain_numeric: bool = False
 
 
 _REF_HEADING = re.compile(
@@ -64,6 +67,15 @@ _REF_HEADING = re.compile(
     re.I,
 )
 _NUMERIC_REF = re.compile(r"^\s*(?:\[(?P<bracket>\d+)\]|(?P<plain>\d+)[.)])\s+(?P<entry>\S.*)$")
+_NOTE_REF = re.compile(r"^\s*\[\^(?P<key>[A-Za-z0-9_-]+)\]:\s*(?P<entry>\S.*)$")
+_NOTE_MARKER = re.compile(r"\[\^(?P<key>[A-Za-z0-9_-]+)\](?!:)")
+_STRUCT_REF = re.compile(r"^\s*\[@(?P<key>[A-Za-z0-9_-]+)\]\s+(?P<entry>\S.*)$")
+_STRUCT_MARKER = re.compile(r"\[@(?P<key>[A-Za-z0-9_-]+)\]")
+_SUPERSCRIPT = re.compile(r"\^\{(?P<body>\d+(?:\s*[,;–-]\s*\d+)*)\}")
+_PAREN_NUMERIC = re.compile(r"\((?P<body>\d{1,3}(?:\s*[-–—]\s*\d{1,3})?"
+                            r"(?:\s*[,;]\s*\d{1,3}(?:\s*[-–—]\s*\d{1,3})?)*)\)")
+_UNICODE_SUP = re.compile(r"(?<=[.!?。！？])(?P<body>[⁰¹²³⁴⁵⁶⁷⁸⁹]+)(?=[.,;:!?。！？\s]|$)")
+_SUP_TRANSLATION = str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹", "0123456789")
 _AUTHOR_REF = re.compile(
     r"^\s*(?P<authors>[A-ZÀ-ÖØ-Þ][^()\n]{1,120}?)\s*"
     r"\((?P<year>(?:19|20)\d{2}[a-z]?)\)\s*[.,]?\s+\S",
@@ -183,12 +195,19 @@ def _parse_references(lines: list[_Line]) -> tuple[ReferenceCandidate, ...]:
         if not text:
             continue
         number = _NUMERIC_REF.match(text)
-        author = None if number else _AUTHOR_REF.match(text)
-        if number or author:
+        structural = None if number else _STRUCT_REF.match(text)
+        author = None if number or structural else _AUTHOR_REF.match(text)
+        if number or structural or author:
             flush()
             current = [line]
             if number:
                 base_id = "ref_n_" + (number["bracket"] or number["plain"])
+                duplicates = sum(ref.ref_id == base_id or ref.ref_id.startswith(base_id + "_dup")
+                                 for ref in entries)
+                current_id = base_id if duplicates == 0 else f"{base_id}_dup{duplicates + 1}"
+                authors, year = "", ""
+            elif structural:
+                base_id = "ref_struct_" + structural["key"]
                 duplicates = sum(ref.ref_id == base_id or ref.ref_id.startswith(base_id + "_dup")
                                  for ref in entries)
                 current_id = base_id if duplicates == 0 else f"{base_id}_dup{duplicates + 1}"
@@ -202,6 +221,18 @@ def _parse_references(lines: list[_Line]) -> tuple[ReferenceCandidate, ...]:
     return tuple(entries)
 
 
+def _parse_note_references(lines: list[_Line]) -> tuple[ReferenceCandidate, ...]:
+    notes: list[ReferenceCandidate] = []
+    for line in lines:
+        if match := _NOTE_REF.match(line.text):
+            base_id = "ref_note_" + match["key"]
+            duplicates = sum(ref.ref_id == base_id or ref.ref_id.startswith(base_id + "_dup")
+                             for ref in notes)
+            ref_id = base_id if duplicates == 0 else f"{base_id}_dup{duplicates + 1}"
+            notes.append(_reference(match["entry"], ref_id, _locations([line])))
+    return tuple(notes)
+
+
 def _mentions(segment: str) -> tuple[list[_Mention], list[str], list[str]]:
     found: list[_Mention] = []
     seen: set[tuple] = set()
@@ -210,7 +241,8 @@ def _mentions(segment: str) -> tuple[list[_Mention], list[str], list[str]]:
 
     def add(mention: _Mention) -> None:
         key = (mention.unparsed, mention.marker if mention.unparsed else "",
-               mention.number, mention.first_author.casefold(),
+               mention.number, mention.note_key, mention.target_id,
+               mention.first_author.casefold(),
                mention.second_author.casefold(), mention.year)
         if key not in seen:
             found.append(mention)
@@ -234,6 +266,38 @@ def _mentions(segment: str) -> tuple[list[_Mention], list[str], list[str]]:
     for group in numeric_groups:
         for number in group.numbers:
             add(_Mention(group.marker, start=group.start, number=number))
+    for match in _SUPERSCRIPT.finditer(segment):
+        before = segment[:match.start()].rstrip()
+        if re.search(r"(?:^|\W)[A-Za-z]$", before):
+            continue  # Common mathematical exponent, e.g. x^{2}.
+        try:
+            for group in extract_citation_groups("[" + match["body"] + "]"):
+                for number in group.numbers:
+                    add(_Mention(match.group(), start=match.start(), number=number,
+                                 uncertain_numeric=True))
+        except CitationParseError:
+            add(_Mention(match.group(), start=match.start(), unparsed=True))
+            invalid.append(match.group())
+    for match in _UNICODE_SUP.finditer(segment):
+        add(_Mention(match.group(), start=match.start(),
+                     number=int(match["body"].translate(_SUP_TRANSLATION)),
+                     uncertain_numeric=True))
+    for match in _PAREN_NUMERIC.finditer(segment):
+        if re.search(r"\b(?:Eq(?:uation)?|Fig(?:ure)?|Table)\.?\s*$",
+                     segment[:match.start()], re.I):
+            continue
+        try:
+            for group in extract_citation_groups("[" + match["body"] + "]"):
+                for number in group.numbers:
+                    add(_Mention(match.group(), start=match.start(), number=number,
+                                 uncertain_numeric=True))
+        except CitationParseError:
+            add(_Mention(match.group(), start=match.start(), unparsed=True))
+            invalid.append(match.group())
+    for match in _NOTE_MARKER.finditer(segment):
+        add(_Mention(match.group(), start=match.start(), note_key=match["key"]))
+    for match in _STRUCT_MARKER.finditer(segment):
+        add(_Mention(match.group(), start=match.start(), target_id=match["key"]))
     for match in _PAREN_CITATION.finditer(segment):
         for item in match["body"].split(";"):
             if parsed := _PAREN_ITEM.fullmatch(item.strip()):
@@ -252,6 +316,14 @@ def _mentions(segment: str) -> tuple[list[_Mention], list[str], list[str]]:
 
 
 def _candidates(mention: _Mention, refs: tuple[ReferenceCandidate, ...]) -> list[ReferenceCandidate]:
+    if mention.target_id:
+        base_id = "ref_struct_" + mention.target_id
+        return [ref for ref in refs if ref.ref_id == base_id
+                or ref.ref_id.startswith(base_id + "_dup")]
+    if mention.note_key:
+        base_id = "ref_note_" + mention.note_key
+        return [ref for ref in refs if ref.ref_id == base_id
+                or ref.ref_id.startswith(base_id + "_dup")]
     if mention.number is not None:
         base_id = f"ref_n_{mention.number}"
         return [ref for ref in refs if ref.ref_id == base_id
@@ -265,12 +337,15 @@ def _candidates(mention: _Mention, refs: tuple[ReferenceCandidate, ...]) -> list
 
 def extract_whole_paper(document: ConvertedDocument) -> WholePaperOutcome:
     """Extract explicit cited claims and their own bibliography entries."""
-    lines = _lines(document)
+    all_lines = _lines(document)
+    note_lines = [line for line in all_lines if _NOTE_REF.match(line.text)]
+    lines = [line for line in all_lines if not _NOTE_REF.match(line.text)]
     headings = [index for index, line in enumerate(lines) if _REF_HEADING.fullmatch(line.text)]
-    section_found = bool(headings)
+    note_references = _parse_note_references(note_lines)
+    section_found = bool(headings or note_references)
     boundary = headings[-1] if headings else len(lines)
     body = _paragraphs(lines[:boundary])
-    references = _parse_references(lines[boundary + 1:]) if section_found else ()
+    references = (_parse_references(lines[boundary + 1:]) if headings else ()) + note_references
     issues: list[ExtractionIssue] = []
     pairs: list[CitationHandoff] = []
     if not section_found:
@@ -308,6 +383,9 @@ def extract_whole_paper(document: ConvertedDocument) -> WholePaperOutcome:
                     status, reference = "ambiguous", None
                     candidate_ids = tuple(ref.ref_id for ref in candidates)
                     message = f"{mention.marker} 對應多筆 ref，需人工確認。"
+                elif mention.uncertain_numeric:
+                    status, reference, candidate_ids = "unparsed", None, ()
+                    message = f"{mention.marker} 可能是上標、註腳、公式或數字型引用；無可確認的 ref。"
                 else:
                     status, reference, candidate_ids = "missing_reference", None, ()
                     message = f"ref 清單找不到 {mention.marker}。"
