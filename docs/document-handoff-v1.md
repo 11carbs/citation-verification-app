@@ -23,14 +23,16 @@ schema_version=citation-handoff.v1，每筆包含：
 
 - document_id、claim_id、pair_id、citation_group_id
 - claim_text、context、citation_marker、block_ids
+- source_locations：陳述原文的 block_id、locator、區塊內行號；PDF 另有 page、bbox。paragraph_char_start／paragraph_char_end 是正規化後段落內的零起算字元位置。
 - match_status：matched / missing_reference / ambiguous / unparsed
-- reference：ref_id、raw_text、title、authors、year、doi、url
+- reference：ref_id、raw_text、title、authors、year、doi、url、source_locations（ref 原文位置）
 - candidate_ref_ids、error_message
 
 ref_id 為字串，不要求數字編號，以容納作者年份、註釋等引用。
 同一主張的多來源共用 claim_id 和 citation_group_id，各有獨立 pair_id。
 同一來源出現在不同主張時，共用 ref_id、保留各自主張配對。
 只有 matched 的項目送入來源查詢；ambiguous 保留至少兩個候選，不任選其一。
+缺少 ref 使用 missing_reference；重複編號 ref 產生不同候選 ID，標記 ambiguous；能看出像引用但無法安全解析時標記 unparsed。同一主張重複引用同一來源會合併一筆，另給警告。
 沒有取得 metadata 時使用空欄位，不填造假的 DOI 或篇名。
 
 第二人需要確認：欄位命名、ref_id／block_id 的保存方式、缺失及歧義狀態；確認後才將此契約視為定案。

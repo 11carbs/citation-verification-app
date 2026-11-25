@@ -8,6 +8,14 @@ from src.document_conversion import (
 )
 from src.whole_paper import extract_whole_paper
 
+
+def format_locations(locations):
+    return "; ".join(
+        f"{location.locator}，行 {location.line_start}–{location.line_end}"
+        for location in locations
+    )
+
+
 st.set_page_config(page_title="論文轉 Markdown", layout="wide")
 st.title("論文輸入與 Markdown 轉換")
 st.caption("擷取整篇論文的數字型及作者年份型引用；本頁尚未取得來源全文或判斷支持程度。")
@@ -70,6 +78,7 @@ if result is not None:
                 st.dataframe([{
                     "ref ID": ref.ref_id, "參考文獻原文": ref.raw_text,
                     "年份": ref.year, "DOI": ref.doi,
+                    "原文位置": format_locations(ref.source_locations),
                 } for ref in outcome.references], hide_index=True, width="stretch")
             else:
                 st.info("尚未辨識到參考文獻條目。")
@@ -81,7 +90,7 @@ if result is not None:
                 "引用標記": pair.citation_marker,
                 "配對狀態": pair.match_status,
                 "ref": pair.reference.raw_text if pair.reference else "",
-                "來源區塊": ", ".join(pair.block_ids),
+                "陳述原文位置": format_locations(pair.source_locations),
                 "待處理原因": pair.error_message,
             } for pair in outcome.pairs], hide_index=True, width="stretch")
         st.download_button(

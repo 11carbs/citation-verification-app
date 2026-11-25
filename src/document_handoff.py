@@ -4,6 +4,18 @@ from typing import Literal
 
 
 @dataclass(frozen=True)
+class SourceLocation:
+    """Location in a ConvertedDocument block; lines are one-based within it."""
+
+    block_id: str
+    locator: str
+    line_start: int
+    line_end: int
+    page: int | None = None
+    bbox: tuple[float, ...] | None = None
+
+
+@dataclass(frozen=True)
 class ReferenceCandidate:
     ref_id: str
     raw_text: str
@@ -12,6 +24,7 @@ class ReferenceCandidate:
     year: str = ""
     doi: str = ""
     url: str = ""
+    source_locations: tuple[SourceLocation, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -28,6 +41,9 @@ class CitationHandoff:
     reference: ReferenceCandidate | None = None
     candidate_ref_ids: tuple[str, ...] = ()
     error_message: str = ""
+    source_locations: tuple[SourceLocation, ...] = ()
+    paragraph_char_start: int | None = None
+    paragraph_char_end: int | None = None
     schema_version: str = "citation-handoff.v1"
 
     def __post_init__(self):

@@ -11,7 +11,7 @@ import re
 
 from src.citation_parser import CitationParseError, extract_citation_groups, split_claim_segments
 from src.document_conversion import ConvertedDocument
-from src.document_handoff import CitationHandoff, ReferenceCandidate
+from src.document_handoff import CitationHandoff, ReferenceCandidate, SourceLocation
 
 
 @dataclass(frozen=True)
@@ -33,21 +33,29 @@ class WholePaperOutcome:
 class _Line:
     text: str
     block_id: str
+    locator: str
+    line_number: int
+    page: int | None
+    bbox: tuple[float, ...] | None
 
 
 @dataclass(frozen=True)
 class _Paragraph:
     text: str
     block_ids: tuple[str, ...]
+    source_locations: tuple[SourceLocation, ...]
+    lines: tuple[_Line, ...]
 
 
 @dataclass(frozen=True)
 class _Mention:
     marker: str
+    start: int = 0
     number: int | None = None
     first_author: str = ""
     second_author: str = ""
     year: str = ""
+    unparsed: bool = False
 
 
 _REF_HEADING = re.compile(
@@ -76,26 +84,65 @@ _NARRATIVE = re.compile(
 )
 _DOI = re.compile(r"\b10\.\d{4,9}/[^\s,;]+", re.I)
 _URL = re.compile(r"https?://[^\s<>]+", re.I)
+_LIKELY_AUTHOR_YEAR = re.compile(r"^[A-ZÀ-ÖØ-Þ][\w'’\-]+(?:\s+et\s+al\.)?\s+(?:19|20)\d{2}[a-z]?$", re.I)
+_NUMERIC_LIKE = re.compile(
+    r"\[\s*\d+(?:\s*[-–—]\s*\d+)?"
+    r"(?:\s*[,;]\s*\d+(?:\s*[-–—]\s*\d+)?)*\s*\]"
+    r"(?:\s*[-–—]\s*\[\s*\d+\s*\])?"
+)
 
 
 def _lines(document: ConvertedDocument) -> list[_Line]:
-    return [_Line(line, block.block_id) for block in document.blocks
-            for line in block.markdown.splitlines()]
+    return [
+        _Line(line, block.block_id, block.locator, number, block.page, block.bbox)
+        for block in document.blocks
+        for number, line in enumerate(block.markdown.splitlines(), 1)
+    ]
+
+
+def _locations(lines: list[_Line]) -> tuple[SourceLocation, ...]:
+    locations: list[SourceLocation] = []
+    for line in lines:
+        if locations and locations[-1].block_id == line.block_id:
+            last = locations[-1]
+            locations[-1] = SourceLocation(last.block_id, last.locator, last.line_start,
+                                           line.line_number, last.page, last.bbox)
+        else:
+            locations.append(SourceLocation(line.block_id, line.locator, line.line_number,
+                                            line.line_number, line.page, line.bbox))
+    return tuple(locations)
 
 
 def _paragraphs(lines: list[_Line]) -> list[_Paragraph]:
     paragraphs: list[_Paragraph] = []
-    parts: list[str] = []
-    ids: list[str] = []
-    for line in [*lines, _Line("", "")]:
-        if not line.text.strip() or (ids and line.block_id != ids[-1]):
-            if parts:
-                paragraphs.append(_Paragraph(" ".join(parts), tuple(dict.fromkeys(ids))))
-                parts, ids = [], []
+    current: list[_Line] = []
+    for line in [*lines, _Line("", "", "", 0, None, None)]:
+        if not line.text.strip() or (current and line.block_id != current[-1].block_id):
+            if current:
+                paragraphs.append(_Paragraph(
+                    " ".join(" ".join(item.text.strip() for item in current).split()),
+                    tuple(dict.fromkeys(item.block_id for item in current)), _locations(current),
+                    tuple(current),
+                ))
+                current = []
         if line.text.strip():
-            parts.append(line.text.strip())
-            ids.append(line.block_id)
+            current.append(line)
     return paragraphs
+
+
+def _segment_locations(paragraph: _Paragraph, start: int | None,
+                       end: int | None) -> tuple[SourceLocation, ...]:
+    if start is None or end is None:
+        return paragraph.source_locations
+    selected: list[_Line] = []
+    offset = 0
+    for line in paragraph.lines:
+        normalized = " ".join(line.text.split())
+        line_end = offset + len(normalized)
+        if start < line_end and end > offset:
+            selected.append(line)
+        offset = line_end + 1
+    return _locations(selected) or paragraph.source_locations
 
 
 def _authors(prefix: str) -> tuple[str, ...]:
@@ -107,26 +154,29 @@ def _authors(prefix: str) -> tuple[str, ...]:
     return tuple(names)
 
 
-def _reference(raw: str, ref_id: str, author_prefix: str = "", year: str = "") -> ReferenceCandidate:
+def _reference(raw: str, ref_id: str, locations: tuple[SourceLocation, ...],
+               author_prefix: str = "", year: str = "") -> ReferenceCandidate:
     doi_match = _DOI.search(raw)
     url_match = _URL.search(raw)
     return ReferenceCandidate(
         ref_id=ref_id, raw_text=raw, authors=_authors(author_prefix) if author_prefix else (),
         year=year, doi=doi_match.group().rstrip(".,)") if doi_match else "",
         url=url_match.group().rstrip(".,)") if url_match else "",
+        source_locations=locations,
     )
 
 
 def _parse_references(lines: list[_Line]) -> tuple[ReferenceCandidate, ...]:
     entries: list[ReferenceCandidate] = []
-    current: list[str] = []
+    current: list[_Line] = []
     current_id = ""
     authors = ""
     year = ""
 
     def flush() -> None:
         if current:
-            entries.append(_reference(" ".join(current), current_id, authors, year))
+            entries.append(_reference(" ".join(line.text.strip() for line in current),
+                                      current_id, _locations(current), authors, year))
 
     for line in lines:
         text = line.text.strip()
@@ -136,7 +186,7 @@ def _parse_references(lines: list[_Line]) -> tuple[ReferenceCandidate, ...]:
         author = None if number else _AUTHOR_REF.match(text)
         if number or author:
             flush()
-            current = [text]
+            current = [line]
             if number:
                 base_id = "ref_n_" + (number["bracket"] or number["plain"])
                 duplicates = sum(ref.ref_id == base_id or ref.ref_id.startswith(base_id + "_dup")
@@ -147,37 +197,58 @@ def _parse_references(lines: list[_Line]) -> tuple[ReferenceCandidate, ...]:
                 current_id = f"ref_a_{len(entries) + 1:03d}"
                 authors, year = author["authors"], author["year"]
         elif current:
-            current.append(text)
+            current.append(line)
     flush()
     return tuple(entries)
 
 
-def _mentions(segment: str) -> list[_Mention]:
+def _mentions(segment: str) -> tuple[list[_Mention], list[str], list[str]]:
     found: list[_Mention] = []
     seen: set[tuple] = set()
+    duplicates: list[str] = []
+    invalid: list[str] = []
 
     def add(mention: _Mention) -> None:
-        key = (mention.number, mention.first_author.casefold(),
+        key = (mention.unparsed, mention.marker if mention.unparsed else "",
+               mention.number, mention.first_author.casefold(),
                mention.second_author.casefold(), mention.year)
         if key not in seen:
             found.append(mention)
             seen.add(key)
+        else:
+            duplicates.append(mention.marker)
 
-    for group in extract_citation_groups(segment):
+    try:
+        numeric_groups = extract_citation_groups(segment)
+    except CitationParseError:
+        numeric_groups = []
+        for marker in _NUMERIC_LIKE.finditer(segment):
+            try:
+                for group in extract_citation_groups(marker.group()):
+                    for number in group.numbers:
+                        add(_Mention(group.marker, start=marker.start() + group.start,
+                                     number=number))
+            except CitationParseError:
+                add(_Mention(marker.group(), start=marker.start(), unparsed=True))
+                invalid.append(marker.group())
+    for group in numeric_groups:
         for number in group.numbers:
-            add(_Mention(group.marker, number=number))
+            add(_Mention(group.marker, start=group.start, number=number))
     for match in _PAREN_CITATION.finditer(segment):
         for item in match["body"].split(";"):
             if parsed := _PAREN_ITEM.fullmatch(item.strip()):
-                add(_Mention(match.group(), first_author=parsed["first"],
+                add(_Mention(match.group(), start=match.start(), first_author=parsed["first"],
                              second_author=parsed["second"] or "", year=parsed["year"]))
+            elif _LIKELY_AUTHOR_YEAR.fullmatch(item.strip()):
+                add(_Mention(item.strip(), start=match.start(), unparsed=True))
+                invalid.append(item.strip())
     for match in _NARRATIVE.finditer(segment):
         if any(parent.start() <= match.start() < parent.end()
                for parent in _PAREN_CITATION.finditer(segment)):
             continue
-        add(_Mention(match.group(), first_author=match["first"],
+        add(_Mention(match.group(), start=match.start(), first_author=match["first"],
                      second_author=match["second"] or "", year=match["year"]))
-    return found
+    return sorted(found, key=lambda mention: mention.start), duplicates, invalid
 
 
 def _candidates(mention: _Mention, refs: tuple[ReferenceCandidate, ...]) -> list[ReferenceCandidate]:
@@ -209,19 +280,29 @@ def extract_whole_paper(document: ConvertedDocument) -> WholePaperOutcome:
 
     claim_number = 0
     for paragraph in body:
+        cursor = 0
         for segment in split_claim_segments(paragraph.text):
-            try:
-                mentions = _mentions(segment)
-            except CitationParseError as error:
-                issues.append(ExtractionIssue("INVALID_NUMERIC_CITATION", str(error)))
-                continue
+            start = paragraph.text.find(segment, cursor)
+            end = start + len(segment) if start >= 0 else None
+            if end is not None:
+                cursor = end
+            mentions, duplicates, invalid = _mentions(segment)
+            for marker in dict.fromkeys(duplicates):
+                issues.append(ExtractionIssue("REPEATED_REFERENCE_IN_CLAIM",
+                                              f"同一引用陳述重複出現 {marker}，已合併為一筆配對。"))
+            for marker in dict.fromkeys(invalid):
+                issues.append(ExtractionIssue("UNPARSED_CITATION",
+                                              f"無法安全解析引用標記 {marker}，需人工確認。"))
             if not mentions:
                 continue
             claim_number += 1
             claim_id = f"claim_{claim_number:04d}"
             for mention in mentions:
-                candidates = _candidates(mention, references)
-                if len(candidates) == 1:
+                candidates = [] if mention.unparsed else _candidates(mention, references)
+                if mention.unparsed:
+                    status, reference, candidate_ids = "unparsed", None, ()
+                    message = f"無法判定 {mention.marker} 的引用格式或對應 ref。"
+                elif len(candidates) == 1:
                     status, reference, candidate_ids, message = "matched", candidates[0], (), ""
                 elif candidates:
                     status, reference = "ambiguous", None
@@ -237,6 +318,9 @@ def extract_whole_paper(document: ConvertedDocument) -> WholePaperOutcome:
                     citation_marker=mention.marker, block_ids=paragraph.block_ids,
                     match_status=status, reference=reference,
                     candidate_ref_ids=candidate_ids, error_message=message,
+                    source_locations=_segment_locations(paragraph, start if start >= 0 else None, end),
+                    paragraph_char_start=start if start >= 0 else None,
+                    paragraph_char_end=end,
                 ))
     if not pairs:
         issues.append(ExtractionIssue("NO_SUPPORTED_CITATIONS", "正文中未偵測到可解析的數字型或作者年份型引用。"))

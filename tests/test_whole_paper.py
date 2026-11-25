@@ -127,3 +127,77 @@ def test_xml_ref_list_with_numeric_xref():
     assert result.section_found
     assert len(result.pairs) == 1
     assert result.pairs[0].reference.ref_id == "ref_n_1"
+
+
+def test_multi_source_and_repeated_source_keep_distinct_claim_pairs():
+    paper = ("First claim [1], [2]. Second claim uses the first source [1].\n\n"
+             "References\n[1] A. Author, First source.\n[2] B. Author, Second source.")
+    result = extract_whole_paper(convert_pasted_paper(paper))
+    assert [(pair.claim_id, pair.reference.ref_id) for pair in result.pairs] == [
+        ("claim_0001", "ref_n_1"), ("claim_0001", "ref_n_2"),
+        ("claim_0002", "ref_n_1"),
+    ]
+    assert len({pair.pair_id for pair in result.pairs}) == 3
+    assert result.pairs[0].citation_group_id == result.pairs[1].citation_group_id
+    assert result.pairs[2].citation_group_id != result.pairs[0].citation_group_id
+
+
+def test_missing_ref_does_not_borrow_another_reference():
+    paper = "Claim [1], [9].\n\nReferences\n[1] A. Author, Source."
+    result = extract_whole_paper(convert_pasted_paper(paper))
+    assert [pair.match_status for pair in result.pairs] == ["matched", "missing_reference"]
+    assert result.pairs[1].reference is None
+    assert result.pairs[1].candidate_ref_ids == ()
+
+
+def test_repeated_marker_in_one_claim_is_recorded_without_duplicate_pair():
+    paper = "Claim [1] and again [1].\n\nReferences\n[1] A. Author, Source."
+    result = extract_whole_paper(convert_pasted_paper(paper))
+    assert len(result.pairs) == 1
+    assert any(issue.code == "REPEATED_REFERENCE_IN_CLAIM" for issue in result.issues)
+
+
+def test_unparsed_citation_is_retained_for_review():
+    paper = ("Claim [4]-[2]. Another claim (Wang 2024).\n\nReferences\n"
+             "[2] A. Author, Source.\nWang, T. (2024). Other source.")
+    result = extract_whole_paper(convert_pasted_paper(paper))
+    assert [pair.match_status for pair in result.pairs] == ["unparsed", "unparsed"]
+    assert all(pair.reference is None for pair in result.pairs)
+    assert sum(issue.code == "UNPARSED_CITATION" for issue in result.issues) == 2
+
+
+def test_malformed_numeric_marker_does_not_hide_other_valid_marker():
+    paper = "Claim [1] and invalid [4]-[2].\n\nReferences\n[1] A. Author, Source."
+    result = extract_whole_paper(convert_pasted_paper(paper))
+    assert [pair.match_status for pair in result.pairs] == ["matched", "unparsed"]
+    assert result.pairs[0].reference.ref_id == "ref_n_1"
+
+
+def test_claim_and_reference_locations_survive_one_block_full_paper():
+    paper = ("# Study\n\nClaim [1].\nSecond claim [1].\n\nReferences\n"
+             "[1] A. Author, Source title.\n  Source continuation.")
+    result = extract_whole_paper(convert_pasted_paper(paper))
+    first, second = result.pairs
+    assert (first.source_locations[0].line_start, first.source_locations[0].line_end) == (3, 3)
+    assert (second.source_locations[0].line_start, second.source_locations[0].line_end) == (4, 4)
+    assert first.source_locations[0].locator == "text:document"
+    assert first.paragraph_char_start == 0
+    assert second.paragraph_char_start > first.paragraph_char_start
+    ref_location = first.reference.source_locations[0]
+    assert (ref_location.line_start, ref_location.line_end) == (7, 8)
+
+
+def test_pdf_claim_and_reference_keep_page_and_box():
+    import pymupdf
+
+    pdf = pymupdf.open()
+    pdf.new_page().insert_text((72, 72), "Claim [1].")
+    page_two = pdf.new_page()
+    page_two.insert_text((72, 72), "References")
+    page_two.insert_text((72, 100), "[1] A. Author, Source.")
+    result = extract_whole_paper(convert_document(pdf.tobytes(), "study.pdf"))
+    pair = result.pairs[0]
+    assert pair.source_locations[0].page == 1
+    assert pair.source_locations[0].bbox
+    assert pair.reference.source_locations[0].page == 2
+    assert pair.reference.source_locations[0].bbox
