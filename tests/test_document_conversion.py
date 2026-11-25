@@ -62,7 +62,10 @@ def test_pdf_positions_and_empty_page_warning():
 def test_image_only_pdf_is_not_empty_success():
     import pymupdf
     doc = pymupdf.open()
-    doc.new_page()
+    page = doc.new_page()
+    image = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 2, 2), False)
+    image.clear_with(255)
+    page.insert_image(pymupdf.Rect(72, 72, 200, 200), stream=image.tobytes("png"))
     with pytest.raises(ConversionError) as error:
         convert_document(doc.tobytes(), "scan.pdf")
     assert error.value.code == "NO_EXTRACTABLE_TEXT"
