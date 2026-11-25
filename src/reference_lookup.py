@@ -12,8 +12,11 @@ Semantic Scholar 用 DOI、arXiv ID、篇名查詢；無可用摘要時依識別
 金鑰都可省略，但都建議給：
 - Semantic Scholar 不給金鑰也能用，容易被限流（HTTP 429）。金鑰以 x-api-key 標頭送出，
   核發的額度是 1 RPS 且跨所有 endpoint 累計，RequestsClient 的間隔已設 1.2 秒
-- OpenAlex 自 2026-02-13 起改為金鑰制，polite pool 已退場。沒有金鑰每天只有
-  100 credits，超過就會被擋；免費金鑰可拉到 100,000。沒給金鑰仍會嘗試查詢
+- OpenAlex 的 polite pool 已退場，改成金鑰加每日預算制（2026-11-26 查官方說明並實測金鑰）。
+  免費金鑰每天 US$1，等於 10,000 credits，速率 30 req/s；沒有金鑰是 10 req/s、
+  預算只有十分之一。用 DOI 直查（singleton）0 credits，用篇名查（search）每次 10 credits，
+  所以額度幾乎都花在篇名查。沒給金鑰仍會嘗試查詢
+  https://help.openalex.org/api/authentication/
 
 在 app.py 裡用法：
     ReferenceLookupAdapter(
@@ -42,7 +45,9 @@ from src.abstract_sources import (
     ARXIV_ID, AbstractHTML, AbstractMarkup, OfficialAbstractHTML, abstract_problem,
     acl_anthology_id, clean_text, doi_value, official_web_source,
 )
-from src.reference_metadata import ReferenceMetadata, extract_reference_metadata
+from src.reference_metadata import (
+    ReferenceMetadata, extract_reference_metadata, reference_cache_key,
+)
 from src.schemas import CitationPair, SourceStatus
 from src.w3c_sources import W3C, W3CPage, access_date, comparable_titles, history_names, report_path
 
@@ -665,7 +670,7 @@ class _Lookup:
 
     def openalex(self) -> dict | None:
         if not self.openalex_key:
-            self.notes.append("沒有 OpenAlex 金鑰，仍嘗試查詢（每日 100 credits 上限）")
+            self.notes.append("沒有 OpenAlex 金鑰，仍嘗試查詢（速率與每日預算都只有免費金鑰的一小部分）")
         doi = self.meta.doi
         if not doi and self.meta.arxiv_id:
             doi = ARXIV_DOI_PREFIX + self.meta.arxiv_id.lower()
@@ -811,6 +816,12 @@ class _Lookup:
         return self._result(SourceStatus.NOT_FOUND)
 
 
+def _memo_key(meta: ReferenceMetadata, ref_raw: str) -> str:
+    """同一次執行內辨識「同一筆被引文獻」用的鍵；書目抽不出識別碼時退用原始字串。"""
+
+    return reference_cache_key(meta) or "raw:" + " ".join(ref_raw.split())
+
+
 class ReferenceLookupAdapter:
     """Second-person implementation of ``src.adapters.ReferenceLookupAdapter``.
 
@@ -826,15 +837,19 @@ class ReferenceLookupAdapter:
         self.s2_key = s2_key or None
         self.openalex_key = openalex_key or None
         self.http = http or RequestsClient()
-        self._cache: dict[int, ReferenceLookupResult] = {}
+        self._cache: dict[str, ReferenceLookupResult] = {}
         self._scholar_cache = scholar_cache if scholar_cache is not None else {}
 
     def lookup(self, pair: CitationPair) -> ReferenceLookupResult:
-        if pair.ref_number in self._cache:
-            cached = self._cache[pair.ref_number]
-            return replace(cached, attempts=(), source_note=f"{cached.source_note}；沿用本次查詢結果")
-
         meta = extract_reference_metadata(pair.ref_raw)
+        # 用書目本身當鍵，不可以用 ref 編號：同一個 adapter 跑第二篇論文時，
+        # 第二篇的 [1] 會拿到第一篇 [1] 的摘要
+        memo = _memo_key(meta, pair.ref_raw)
+        if memo in self._cache:
+            cached = self._cache[memo]
+            return replace(cached, ref_number=pair.ref_number, attempts=(),
+                           source_note=f"{cached.source_note}；沿用本次查詢結果")
+
         cached = self._scholar_cache.get(meta)
         if cached is not None:
             result = replace(
@@ -843,7 +858,7 @@ class ReferenceLookupAdapter:
                 attempts=(),
                 source_note=f"{cached.source_note}；沿用此工作階段先前取得的摘要",
             )
-            self._cache[pair.ref_number] = result
+            self._cache[memo] = result
             return result
 
         run = _Lookup(self.http, meta, self.s2_key, self.openalex_key, pair.ref_raw)
@@ -867,7 +882,7 @@ class ReferenceLookupAdapter:
             abstract_url=found["abstract_url"],
             attempts=tuple(trace[trace_start:]) if isinstance(trace, list) else (),
         )
-        self._cache[pair.ref_number] = result
+        self._cache[memo] = result
         if (
             status is SourceStatus.GOT_ABSTRACT
             and result.abstract_source == "semantic_scholar"
