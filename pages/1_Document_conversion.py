@@ -6,6 +6,10 @@ import streamlit as st
 from src.document_conversion import (
     SUPPORTED_EXTENSIONS, ConversionError, convert_document, convert_pasted_paper,
 )
+from src.handoff_bundle import (
+    HandoffValidationError, build_handoff_bundle, pairing_preview_csv_bytes,
+    pairing_preview_rows,
+)
 from src.whole_paper import extract_whole_paper
 
 
@@ -39,6 +43,7 @@ identity = (mode, filename, sha256(data).hexdigest()) if data is not None else N
 if st.session_state.get("converted_identity") != identity:
     st.session_state.pop("converted_document", None)
     st.session_state.pop("paper_extraction", None)
+    st.session_state.pop("handoff_bundle", None)
     st.session_state["converted_identity"] = identity
 
 if st.button("轉成 Markdown", type="primary"):
@@ -51,11 +56,17 @@ if st.button("轉成 Markdown", type="primary"):
                 else convert_document(data, filename)
             )
             st.session_state["converted_document"] = converted
-            st.session_state["paper_extraction"] = extract_whole_paper(converted)
+            extracted = extract_whole_paper(converted)
+            st.session_state["paper_extraction"] = extracted
+            st.session_state["handoff_bundle"] = build_handoff_bundle(converted, extracted)
         except ConversionError as error:
             st.session_state.pop("converted_document", None)
             st.session_state.pop("paper_extraction", None)
+            st.session_state.pop("handoff_bundle", None)
             st.error(f"{error.code}：{error}")
+        except HandoffValidationError as error:
+            st.session_state.pop("handoff_bundle", None)
+            st.error(f"交接資料檢查失敗：{error}")
 
 result = st.session_state.get("converted_document")
 if result is not None:
@@ -71,8 +82,14 @@ if result is not None:
 
     outcome = st.session_state.get("paper_extraction")
     if outcome is not None:
+        bundle = st.session_state.get("handoff_bundle")
         st.subheader("自動擷取的引用配對")
         st.write(f"參考文獻 {len(outcome.references)} 筆；引用配對 {len(outcome.pairs)} 筆")
+        if bundle is not None:
+            st.caption(
+                f"可交第二人查來源：{len(bundle.ready_pairs)} 筆；"
+                f"需人工核對：{len(bundle.review_pairs)} 筆。"
+            )
         with st.expander("查看辨識的參考文獻"):
             if outcome.references:
                 st.dataframe([{
@@ -84,16 +101,29 @@ if result is not None:
                 st.info("尚未辨識到參考文獻條目。")
         for issue in outcome.issues:
             st.warning(f"{issue.code}：{issue.message}")
-        if outcome.pairs:
+        if bundle is not None and outcome.pairs:
             st.dataframe([{
-                "引用陳述": pair.claim_text,
-                "引用標記": pair.citation_marker,
-                "配對狀態": pair.match_status,
-                "ref": pair.reference.raw_text if pair.reference else "",
-                "陳述原文位置": format_locations(pair.source_locations),
-                "待處理原因": pair.error_message,
-            } for pair in outcome.pairs], hide_index=True, width="stretch")
+                "pair_id": row["pair_id"],
+                "引用陳述": row["claim_text"],
+                "引用標記": row["citation_marker"],
+                "配對狀態": row["match_status"],
+                "ref ID": row["ref_id"],
+                "被引文獻": row["ref_raw"],
+                "歧義候選": row["candidate_ref_ids"],
+                "陳述原文位置": row["source_locations"],
+                "待處理原因": row["error_message"],
+            } for row in pairing_preview_rows(bundle)], hide_index=True, width="stretch")
         st.download_button(
-            "下載引用配對 JSON", json.dumps(asdict(outcome), ensure_ascii=False, indent=2),
+            "下載完整擷取結果 JSON", json.dumps(asdict(outcome), ensure_ascii=False, indent=2),
             file_name=result.document_id + "-pairs.json", mime="application/json",
         )
+        if bundle is not None:
+            st.caption("交接檔只將已配對項目列入待查詢清單；缺失與歧義項目留在待核對清單。")
+            st.download_button(
+                "下載第二人交接 JSON", bundle.to_json_bytes(),
+                file_name=result.document_id + "-handoff.json", mime="application/json",
+            )
+            st.download_button(
+                "下載配對預覽 CSV", pairing_preview_csv_bytes(bundle),
+                file_name=result.document_id + "-pairing.csv", mime="text/csv",
+            )

@@ -38,6 +38,22 @@ ref_id 為字串，不要求數字編號，以容納作者年份、註釋等引�
 
 第二人需要確認：欄位命名、ref_id／block_id 的保存方式、缺失及歧義狀態；確認後才將此契約視為定案。
 
+### 可下載的批次交接檔
+
+`src/handoff_bundle.py` 的 `build_handoff_bundle(document, outcome)` 會驗證欄位與原文位置，再產生 `citation-batch.v1` JSON。側欄頁面另有同一批配對的預覽表與 UTF-8 BOM CSV，供人工檢查。
+
+| 欄位 | 用途 |
+| --- | --- |
+| `document_id`、`filename`、`source_format` | 對應輸入的待查核論文 |
+| `ready_pairs` | 僅含 `matched`；第二人可依每筆 `reference.raw_text`／DOI 查指定來源 |
+| `review_pairs` | `missing_reference`、`ambiguous`、`unparsed`；先供人工核對，不進來源查詢 |
+| `references` | 只保留被 ready pair 或歧義候選引用的 ref；未引用條目不交給第二人 |
+| `issues` | 擷取階段的警告，例如重複引用或無法解析標記 |
+
+每筆 pair 都有 `pair_id`、`claim_id`、`citation_group_id`、原引用陳述、引用標記、配對狀態、原文位置及 ref。相同 `claim_id` 可有多個 pair，但原陳述與原文區塊必須一致。相同 `ref_id` 可被不同 `claim_id` 重複引用。交接前檢查文件 ID、唯一 pair/ref ID、來源區塊、文字範圍、候選 ID 與狀態的一致性；驗證失敗時頁面不提供交接檔。
+
+現有 `src/adapters.py` 的 `ReferenceLookupAdapter.lookup(CitationPair)` 與 `ReferenceLookupResult.ref_number` 仍只支援數字編號。它們屬第一階段原型，**不能直接接收** `citation-batch.v1` 的作者年份、註腳或結構化 ID。第二人需確認新版輸入及全文／摘要／證據回傳格式後，才能將來源查詢接進新頁面；本次只交付可核對的輸入資料。
+
 ## 本版限制
 
 - 本版已加入部分上標、腳註／尾註及期刊變體，仍未處理所有期刊版式或 OCR。無法辨識的引用樣式可能不產生配對，需擴充真實論文測例與解析器。
