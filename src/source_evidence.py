@@ -26,6 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from src.adapters import ReferenceLookupResult
+from src.evidence_retrieval import DEFAULT_TOP_K, RetrievalResult, find_evidence
 from src.fulltext_sources import (
     _UNSET, FullTextCache, FullTextFetcher, FullTextResult, FullTextStatus, _Unset,
 )
@@ -103,6 +104,22 @@ class EvidenceResolver:
         """
 
         self._cache.clear()
+
+    def retrieve(self, pair: CitationPair, *,
+                 top_k: int = DEFAULT_TOP_K) -> tuple[SourceEvidence, RetrievalResult]:
+        """取證據，再從裡面挑出與引用句相關的段落（汪老師 11/10 第 10 點）。
+
+        判斷端只要呼叫這一個方法。回傳 ``(證據, 檢索結果)``：前者說證據是全文還是
+        摘要、拿不拿得到；後者說在裡面找到什麼，以及哪些關鍵詞整篇都沒出現。
+        證據是摘要時一樣會跑檢索，摘要短，通常整段都會被挑出來。
+        """
+
+        evidence = self.resolve(pair)
+        # 一定要標明搜的是全文還是摘要：摘要上的「只有零星字詞相符」意義完全不同，
+        # 摘要本來就不會覆蓋主張的細節
+        label = evidence.basis.value if evidence.has_evidence else ""
+        return evidence, find_evidence(pair.claim_text, evidence.text, top_k=top_k,
+                                       source_label=label)
 
     def resolve(self, pair: CitationPair) -> SourceEvidence:
         meta = extract_reference_metadata(pair.ref_raw)

@@ -24,6 +24,14 @@ ARXIV_HTML_PAGE = """
 <h1>Attention Is All You Need</h1>
 <p>The dominant sequence transduction models are based on recurrent networks.</p>
 <p>We propose the Transformer, based solely on attention mechanisms.</p>
+<p>Section 1: the evaluation covered a broad set of engineering journals and the reviewers recorded every disagreement before resolving it by discussion, which kept the annotation process auditable throughout run 1.</p>
+<p>Section 2: the evaluation covered a broad set of engineering journals and the reviewers recorded every disagreement before resolving it by discussion, which kept the annotation process auditable throughout run 2.</p>
+<p>Section 3: the evaluation covered a broad set of engineering journals and the reviewers recorded every disagreement before resolving it by discussion, which kept the annotation process auditable throughout run 3.</p>
+<p>Section 4: the evaluation covered a broad set of engineering journals and the reviewers recorded every disagreement before resolving it by discussion, which kept the annotation process auditable throughout run 4.</p>
+<p>Section 5: the evaluation covered a broad set of engineering journals and the reviewers recorded every disagreement before resolving it by discussion, which kept the annotation process auditable throughout run 5.</p>
+<p>Section 6: the evaluation covered a broad set of engineering journals and the reviewers recorded every disagreement before resolving it by discussion, which kept the annotation process auditable throughout run 6.</p>
+<p>Section 7: the evaluation covered a broad set of engineering journals and the reviewers recorded every disagreement before resolving it by discussion, which kept the annotation process auditable throughout run 7.</p>
+<p>Section 8: the evaluation covered a broad set of engineering journals and the reviewers recorded every disagreement before resolving it by discussion, which kept the annotation process auditable throughout run 8.</p>
 </body></html>
 """
 
@@ -42,6 +50,14 @@ JATS_XML = """<?xml version="1.0"?>
     </sec>
     <sec><title>Results</title>
       <p>GPT-3.5 produced 55% fabricated citations.</p>
+      <p>Observation 1: each citation was traced back to the cited record and the reviewers logged the outcome, including the cases where the cited work existed but did not support the sentence that cited it.</p>
+      <p>Observation 2: each citation was traced back to the cited record and the reviewers logged the outcome, including the cases where the cited work existed but did not support the sentence that cited it.</p>
+      <p>Observation 3: each citation was traced back to the cited record and the reviewers logged the outcome, including the cases where the cited work existed but did not support the sentence that cited it.</p>
+      <p>Observation 4: each citation was traced back to the cited record and the reviewers logged the outcome, including the cases where the cited work existed but did not support the sentence that cited it.</p>
+      <p>Observation 5: each citation was traced back to the cited record and the reviewers logged the outcome, including the cases where the cited work existed but did not support the sentence that cited it.</p>
+      <p>Observation 6: each citation was traced back to the cited record and the reviewers logged the outcome, including the cases where the cited work existed but did not support the sentence that cited it.</p>
+      <p>Observation 7: each citation was traced back to the cited record and the reviewers logged the outcome, including the cases where the cited work existed but did not support the sentence that cited it.</p>
+      <p>Observation 8: each citation was traced back to the cited record and the reviewers logged the outcome, including the cases where the cited work existed but did not support the sentence that cited it.</p>
     </sec>
   </body>
 </article>
@@ -238,7 +254,7 @@ def test_arxiv_without_html_version_keeps_no_converter_reason(monkeypatch):
 
 def test_pdf_converts_when_docling_available(monkeypatch):
     monkeypatch.setattr("src.fulltext_sources.pdf_to_markdown",
-                        lambda data, **kw: ("# Paper\n\nBody text.", "docling", ""))
+                        lambda data, **kw: ("# Paper\n\n" + "Body text that is long enough to look like a real article. " * 30, "docling", ""))
     locations = [{"is_oa": True, "pdf_url": "https://example.org/paper.pdf"}]
     downloader = FakeDownloader({
         "https://api.openalex.org/works/doi:": openalex_work(locations),
@@ -603,7 +619,7 @@ def test_pdf_url_that_serves_html_is_parsed_as_html():
 
 def test_landing_page_that_serves_pdf_goes_to_the_pdf_converter(monkeypatch):
     monkeypatch.setattr("src.fulltext_sources.pdf_to_markdown",
-                        lambda data, **kw: ("# From PDF", "docling", ""))
+                        lambda data, **kw: ("# Paper\n\n" + "Body text that is long enough to look like a real article. " * 30, "docling", ""))
     locations = [{"is_oa": True, "landing_page_url": "https://example.org/landing"}]
     downloader = _SequenceDownloader({
         "https://api.openalex.org/works/doi:": openalex_work(locations),
@@ -759,3 +775,36 @@ def test_cached_record_keeps_the_key_so_a_human_can_find_it(tmp_path: Path):
     files = list(tmp_path.glob("*.json"))
     assert len(files) == 1
     assert json.loads(files[0].read_text(encoding="utf-8"))["key"] == "arxiv:1706.03762"
+
+
+def test_a_blocked_page_is_not_accepted_as_full_text():
+    """擋爬蟲頁轉出來只有幾十字，放行的話來源欄會寫「拿到全文」，實際是垃圾。"""
+
+    locations = [{"is_oa": True, "landing_page_url": "https://example.org/blocked"}]
+    downloader = FakeDownloader({
+        "https://api.openalex.org/works/doi:": openalex_work(locations),
+        "https://example.org/blocked":
+            page("<html><body><p>Access denied. Your request has been blocked.</p></body></html>"),
+    })
+
+    result = FullTextFetcher(downloader=downloader, cache=None).fetch(
+        ReferenceMetadata(doi="10.1/x", title="t"))
+
+    assert result.status is FullTextStatus.TOO_SHORT
+    assert result.ok is False
+    assert "短到不像全文" in result.note
+
+
+def test_a_manual_upload_is_not_rejected_for_being_short():
+    """手動上傳是使用者自己給的備援，不套長度門檻。"""
+
+    import tempfile
+    from pathlib import Path as _Path
+
+    with tempfile.TemporaryDirectory() as folder:
+        path = _Path(folder) / "note.md"
+        path.write_text("# Short note\n\nOnly a couple of lines.", encoding="utf-8")
+
+        result = FullTextFetcher(downloader=FakeDownloader({}), cache=None).fetch_file(path)
+
+    assert result.status is FullTextStatus.GOT_FULL_TEXT
