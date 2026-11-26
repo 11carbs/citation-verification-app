@@ -53,9 +53,15 @@ EUROPE_PMC_BASE = "https://www.ebi.ac.uk/europepmc/webservices/rest"
 ARXIV_HTML = "https://arxiv.org/html"
 ARXIV_PDF = "https://arxiv.org/pdf"
 OPENALEX_FULLTEXT_SELECT = "id,doi,display_name,best_oa_location,locations"
+ARXIV_API = "https://export.arxiv.org/api/query"
+# 用篇名查 arXiv 時最多看前幾筆。arXiv 的 ti: 是詞組比對，相符的幾乎都在第一筆，
+# 多看幾筆是為了副標題寫法不同的情況。
+ARXIV_SEARCH_RESULTS = 5
 
-# 單篇全文的大小上限；學術論文 PDF 超過這個值多半是掃描檔或資料附錄
-MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024
+# 單篇全文的大小上限；超過這個值多半是掃描檔或資料附錄，不是論文本文。
+# 2026-11-26 調高：原本 25 MB，實測 112 筆被引文獻有 3 筆（2.7%）被它擋掉，
+# 三筆都是 arXiv 上的視覺／圖學論文（33.7、34.2、36.4 MB），圖多所以檔案大，不是異常檔。
+MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
 DEFAULT_MIN_INTERVAL = 1.0
 # arXiv 條款只寫「須遵守速率限制」，沒有公開數字；論壇與二手來源都說每 3 秒 1 次，取保守值
 HOST_MIN_INTERVAL = {"arxiv.org": 3.1, "export.arxiv.org": 3.1}
@@ -596,6 +602,24 @@ class FullTextFetcher:
                 if result.ok:
                     return result
 
+        # 最後一條路：用篇名查 arXiv 的預印本。
+        # 實測動機（2026-11-26，112 筆被引文獻）：7 筆被 OpenAlex 判為「沒有開放存取位置」，
+        # 幾乎都是 IEEE／ACM 的會議論文（ICRA、ICCV、IEEE Micro）。會議版 DOI 沒有 OA 位置，
+        # 但同一篇的 arXiv 預印本通常存在，只是掛在另一筆 OpenAlex 紀錄上。
+        # 放在最後而不是前面：它多花一次 arXiv 查詢（每 3 秒 1 次），前面任何一條路成功就不必跑。
+        # 四個條件都成立才跑，否則是把額度花在必然查不到的地方：
+        #   1. 有篇名可查
+        #   2. 書目本身沒有 arXiv ID——有的話那條路剛才就試過同一篇了
+        #   3. OpenAlex 給的位置裡沒有 arxiv.org——有的話上面兩個迴圈已經要過同一組網址
+        #   4. 過程中沒有出過錯。OpenAlex 被限流時，我們連「它認不認得這個篇名」都不知道，
+        #      這時查到的東西不可信；而且會把一次限流放大成每一筆 ref 都多打一次 arXiv，
+        #      反而更容易觸發 arXiv 自己的 429（冷卻是 per-host，會波及後面的 ref）
+        if (meta.title and not meta.arxiv_id and not run.had_error
+                and not _has_arxiv_location(locations)):
+            result = self._from_arxiv_title_search(meta, run)
+            if result is not None and result.ok:
+                return result
+
         # 收尾優先序：拿到檔案卻轉不出來 > 過程中出過錯 > 真的沒有 OA 全文。
         # 前兩種都不是「這篇沒有開放存取全文」，不可以當成實質結論。
         if run.fallback is not None:
@@ -628,6 +652,45 @@ class FullTextFetcher:
         if result.ok:
             run.note("改用 arXiv PDF 取得全文")
         return result
+
+    def _from_arxiv_title_search(self, meta: ReferenceMetadata, run: _Run) -> FullTextResult | None:
+        """用篇名查 arXiv 的預印本，查不到回 ``None``（代表這條路沒結論，不是失敗）。
+
+        篇名不夠像就不採用。arXiv 的 ``ti:`` 名目上是詞組比對，但實測畸形輸入（例如書目裡
+        有未閉合的引號）會讓它退化成模糊搜尋，回五筆毫不相關的論文；**拿錯論文的全文去比對
+        會被判成「引用與來源不符」，那是假的不支持**，所以篇名這一關不能省。
+
+        門檻跟著書目有沒有識別碼走，與 ``reference_lookup`` 查摘要那條路一致：沒有 DOI、
+        arXiv ID 時要求完全相符。兩條路標準不同的話，同一筆 ref 的全文與摘要會來自不同論文。
+        """
+
+        query = meta.title.replace('"', " ").strip()
+        if not query:
+            return None
+        download = self.downloader.get(
+            ARXIV_API,
+            {"search_query": f'ti:"{query}"', "start": 0, "max_results": ARXIV_SEARCH_RESULTS},
+            accept="application/atom+xml")
+        if not download.ok:
+            # 這是查詢端點，不是某一篇的網址，所以不套 _is_absence：這裡的 404 代表端點或
+            # 參數有問題，不代表這篇沒有預印本。端點壞掉是全批一致的，若記成「沒有開放存取
+            # 全文」會讓整批 ref 都被誤判。
+            run.had_error = True
+            run.note(f"arXiv 用篇名查預印本失敗（{_reason(download)}）")
+            return None
+        threshold = TITLE_MATCH if meta.has_identifier else 1.0
+        arxiv_id, problem = _best_arxiv_match(download.text, meta.title, threshold)
+        if problem:
+            # 讀不出來不是「查無」。arXiv 過載時會回 HTTP 200 的 HTML 頁，
+            # 當成查無的話收尾會寫成「這篇沒有開放存取全文」，那是假結論。
+            run.had_error = True
+            run.note(f"arXiv 的查詢回應讀不出來（{problem}）")
+            return None
+        if not arxiv_id:
+            run.note("arXiv 用篇名查不到篇名相符的預印本")
+            return None
+        run.note(f"OpenAlex 沒有可用位置，改用 arXiv 篇名查到預印本 {arxiv_id}")
+        return self._from_arxiv(arxiv_id, run)
 
     def _from_europe_pmc(self, pmcid: str, run: _Run) -> FullTextResult:
         url = f"{EUROPE_PMC_BASE}/{pmcid}/fullTextXML"
@@ -762,12 +825,22 @@ class FullTextFetcher:
         if not candidates:
             run.note("OpenAlex 用篇名查無相符文獻")
             return []
+        # 門檻跟著書目有沒有識別碼走，與 reference_lookup 查摘要那條路一致：沒有 DOI、
+        # arXiv ID 時要求完全相符。原本這裡一律用 TITLE_MATCH，比查摘要那條路鬆，
+        # 同一筆 ref 的全文與摘要有可能來自不同論文。
+        threshold = TITLE_MATCH if meta.has_identifier else 1.0
+        matched_without_locations = False
         for work in candidates:
-            if title_similarity(meta.title, str(work.get("display_name") or "")) >= TITLE_MATCH:
+            if title_similarity(meta.title, str(work.get("display_name") or "")) >= threshold:
                 locations = _open_locations(work)
-                if not locations:
-                    run.note("OpenAlex 用篇名核對到這篇，但沒有開放存取位置")
-                return locations
+                if locations:
+                    return locations
+                # 篇名對上但這一筆沒有 OA 位置。同一篇常常有「預印本紀錄」和「期刊紀錄」
+                # 兩筆，先命中的那筆沒有位置不代表這篇沒有，要繼續看下一個候選。
+                matched_without_locations = True
+        if matched_without_locations:
+            run.note("OpenAlex 用篇名核對到這篇，但沒有開放存取位置")
+            return []
         # search 是模糊比對，一定會回「最接近的」而不是「相符的」。篇名不夠像就不能用：
         # 拿錯論文的全文去比對，會被判成「引用與來源不符」，那是假的不支持。
         closest = str(candidates[0].get("display_name") or "")[:60]
@@ -787,6 +860,67 @@ def _is_absence(download: Download) -> bool:
 
 def _reason(download: Download) -> str:
     return download.error or f"HTTP {download.status}"
+
+
+def _has_arxiv_location(locations: list[dict]) -> bool:
+    """OpenAlex 給的位置裡有沒有 arxiv.org；有的話前面的迴圈已經要過同一組網址了。"""
+
+    for location in locations:
+        for field in ("pdf_url", "landing_page_url"):
+            if "arxiv.org" in _clean_url(location.get(field)).casefold():
+                return True
+    return False
+
+
+# 試過並退回的做法（2026-11-26）：曾經放寬成「資料庫篇名以書目篇名開頭也算同一篇」，
+# 動機是 OpenAlex 對 IEEE 紀錄的 display_name 會接會議資訊，例如
+# `...RT-X Models : Open X-Embodiment Collaboration 0`，相似度只有 0.78 而被判為查不到。
+# 退回原因：「書目篇名是另一篇論文篇名的前綴」在學術文獻裡是結構性常見，不是邊角案例——
+# `Generative Adversarial Networks` → `...: An Overview`（0.84）、
+# `Attention is all you need` → `... in speech separation`（0.70）、
+# `A Survey of Large Language Models` → `... for Healthcare`（0.82）等六個反例全部會誤中，
+# 抓到的是別篇論文的全文，而且 status 是「拿到全文」、note 裡沒有任何警告，下游看不出來。
+# 加上 reference_lookup 在沒有 DOI 時要求篇名完全相符，放寬全文這一條會讓兩條路標準不一致。
+# IEEE 的 display_name 污染因此仍是已知限制：沒有 DOI 的 IEEE 會議論文可能查不回來。
+
+_ARXIV_ABS_RE = re.compile(r"arxiv\.org/abs/(?P<id>.+?)(?:v\d+)?\s*$", re.IGNORECASE)
+
+
+def _best_arxiv_match(atom_xml: str, title: str,
+                      threshold: float = TITLE_MATCH) -> tuple[str, str]:
+    """從 arXiv 的 Atom 回應挑出篇名相符的那一筆，回傳 ``(arxiv_id, 讀不出來的原因)``。
+
+    三種結果必須分開，不可以壓成「回空字串」一種：
+
+    - ``("2310.08864", "")``：找到了
+    - ``("", "")``：回應讀得懂，但沒有篇名相符的預印本
+    - ``("", "<原因>")``：回應讀不出來（arXiv 過載時會回 HTTP 200 的 HTML 頁，
+      或回它自己的錯誤 feed）
+
+    把第三種當成第二種，收尾會寫成「這篇沒有開放存取全文」，下游就變成假的「沒有來源支持」。
+    """
+
+    namespace = "{http://www.w3.org/2005/Atom}"
+    try:
+        feed = ElementTree.fromstring(atom_xml)
+    except ElementTree.ParseError:
+        return "", "回應不是 XML"
+    # 光是解析成功不夠：HTML 頁面也可能是合法的 XML（實測 `<html><body>…</body></html>`
+    # 解得開，root tag 是 html），findall 找不到 entry 就會被誤認成「查無預印本」。
+    if feed.tag != f"{namespace}feed":
+        return "", f"回應不是 Atom feed（root 是 {feed.tag}）"
+    for entry in feed.findall(f"{namespace}entry"):
+        identifier = (entry.findtext(f"{namespace}id") or "").strip()
+        if "arxiv.org/api/errors" in identifier.casefold():
+            return "", "arXiv 回報查詢本身有問題"
+        # arXiv 的 <title> 常常帶換行與多餘空白，不正規化會讓相似度偏低
+        found = " ".join((entry.findtext(f"{namespace}title") or "").split())
+        if not found or title_similarity(title, found) < threshold:
+            continue
+        match = _ARXIV_ABS_RE.search(identifier)
+        if match:
+            return match.group("id"), ""
+    return "", ""
 
 
 def _open_locations(work: dict) -> list[dict]:
