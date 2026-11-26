@@ -98,7 +98,7 @@ rows = run_method_a_pipeline(
 
 ### 被引文獻全文取得（第二人，`src/fulltext_sources.py`）
 
-依汪老師 11/24 第 2 點加入。`FullTextFetcher.fetch(meta)` 依識別碼分三條路取開放存取全文並轉成 Markdown：arXiv ID 走 arXiv 官方 HTML 版（沒有才退 PDF）、PubMed Central 走 Europe PMC 的 JATS XML、其餘用 OpenAlex 的 `best_oa_location` 與 `locations` 找 PDF 或出版社頁面。手動上傳走 `fetch_file(path)`，支援 `.md`、`.xml`、`.html`、`.pdf`。
+依汪老師 11/24 第 2 點加入。`FullTextFetcher.fetch(meta)` 依識別碼分三條路取開放存取全文並轉成 Markdown：arXiv ID 走 arXiv 官方 HTML 版（沒有才退 PDF）、PubMed Central 走 Europe PMC 的 JATS XML、其餘用 OpenAlex 的 `best_oa_location` 與 `locations`，**先試出版社頁面的 HTML，再試 PDF**（分工要求優先使用 HTML、XML；HTML 不經過版面還原，比從 PDF 轉準確。頁面只有書目時會被 `TOO_SHORT` 擋下，再往下試 PDF）。手動上傳走 `fetch_file(path)`，支援 `.md`、`.xml`、`.html`、`.pdf`。
 
 回傳的 `FullTextResult` 帶 `source`（哪一條路）與 `converter`（哪個轉檔器），評估時要靠這兩欄分辨「判斷錯」和「證據沒拿到」。狀態分開記，不可混成一種失敗：
 
