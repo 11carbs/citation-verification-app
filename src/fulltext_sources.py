@@ -4,7 +4,8 @@
 
 1. arXiv ID → arXiv 官方 HTML 版（``arxiv.org/html/{id}``），沒有 HTML 版才退回 PDF
 2. PubMed Central → Europe PMC 的 JATS XML（``/{PMCID}/fullTextXML``）
-3. 其他 → 用 OpenAlex 查 OA 位置，拿 ``best_oa_location`` 或 ``locations`` 的 PDF／HTML
+3. 其他 → 用 OpenAlex 查 OA 位置，**先試 landing page 的 HTML，再試 PDF**（分工要求
+   優先使用 HTML、XML；HTML 不經過版面還原，比從 PDF 轉準確）
 
 轉檔優先序是 XML > HTML > PDF，因為 XML 和 HTML 不經過版面還原，誤差最小：
 
@@ -578,16 +579,20 @@ class FullTextFetcher:
             if result.ok:
                 return result
 
-        for location in locations:
-            pdf_url = _clean_url(location.get("pdf_url"))
-            if pdf_url:
-                result = self._from_pdf_url(pdf_url, run)
-                if result.ok:
-                    return result
+        # HTML 先於 PDF（分工：優先使用 HTML、XML）。HTML 不經過版面還原，比從 PDF 轉準確：
+        # 實測 Nature 那篇的 landing page 轉出 33,967 字乾淨內容，PDF 那條則要靠 docling。
+        # 取捨：這樣可能用到次佳位置的 HTML 而不是最佳位置的 PDF，但格式的差距比位置大。
+        # landing page 是只有書目的空殼時，TOO_SHORT 門檻會擋下來，再往下試 PDF。
         for location in locations:
             landing = _clean_url(location.get("landing_page_url"))
             if landing and str(location.get("version") or "") != "submittedVersion":
                 result = self._from_html_url(landing, run)
+                if result.ok:
+                    return result
+        for location in locations:
+            pdf_url = _clean_url(location.get("pdf_url"))
+            if pdf_url:
+                result = self._from_pdf_url(pdf_url, run)
                 if result.ok:
                     return result
 

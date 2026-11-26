@@ -808,3 +808,44 @@ def test_a_manual_upload_is_not_rejected_for_being_short():
         result = FullTextFetcher(downloader=FakeDownloader({}), cache=None).fetch_file(path)
 
     assert result.status is FullTextStatus.GOT_FULL_TEXT
+
+
+def test_html_is_tried_before_the_pdf(monkeypatch):
+    """分工要求優先使用 HTML、XML。PDF 先試的話，裝了 docling 反而會拿到較差的版本。"""
+
+    monkeypatch.setattr("src.fulltext_sources.pdf_to_markdown",
+                        lambda data, **kw: ("# From PDF\n\n" + "pdf body. " * 200, "docling", ""))
+    locations = [{"is_oa": True, "pdf_url": "https://example.org/paper.pdf",
+                  "landing_page_url": "https://example.org/landing"}]
+    downloader = FakeDownloader({
+        "https://api.openalex.org/works/doi:": openalex_work(locations),
+        "https://example.org/landing": page(ARXIV_HTML_PAGE),
+        "https://example.org/paper.pdf": page("%PDF-1.7 ...", "application/pdf"),
+    })
+
+    result = FullTextFetcher(downloader=downloader, cache=None).fetch(
+        ReferenceMetadata(doi="10.1/x", title="t"))
+
+    assert result.source == "oa_html"
+    assert "https://example.org/paper.pdf" not in downloader.calls
+
+
+def test_an_empty_landing_page_still_falls_back_to_the_pdf(monkeypatch):
+    """landing page 只有書目時會被 TOO_SHORT 擋下，不可以因此放棄 PDF。"""
+
+    monkeypatch.setattr("src.fulltext_sources.pdf_to_markdown",
+                        lambda data, **kw: ("# From PDF\n\n" + "pdf body. " * 200, "docling", ""))
+    locations = [{"is_oa": True, "pdf_url": "https://example.org/paper.pdf",
+                  "landing_page_url": "https://example.org/stub"}]
+    downloader = FakeDownloader({
+        "https://api.openalex.org/works/doi:": openalex_work(locations),
+        "https://example.org/stub": page("<html><body><p>Citation record only.</p></body></html>"),
+        "https://example.org/paper.pdf": page("%PDF-1.7 ...", "application/pdf"),
+    })
+
+    result = FullTextFetcher(downloader=downloader, cache=None).fetch(
+        ReferenceMetadata(doi="10.1/x", title="t"))
+
+    assert result.status is FullTextStatus.GOT_FULL_TEXT
+    assert result.source == "oa_pdf"
+    assert "短到不像全文" in result.note
