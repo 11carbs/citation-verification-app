@@ -76,6 +76,7 @@ _REFERENCE_END_HEADING = re.compile(
     re.I,
 )
 _REFERENCE_END_NOTICE = re.compile(r"^How to cite this article\s*:", re.I)
+_APPENDIX_HEADING = re.compile(r"^[A-Z]\s+[A-Z][A-Za-z][A-Za-z ]{6,80}$")
 _AUTHOR_BIO_START = re.compile(
     r"^[A-Z][A-Za-z .'-]{2,80}(?:\s*\([^)]{1,45}\))?\s+received\s+(?:his|her|the|a)\b",
     re.I,
@@ -96,7 +97,7 @@ _AUTHOR_REF = re.compile(
 )
 _AUTHOR_LIST_START = re.compile(r"^[A-ZÀ-ÖØ-Þ][\w'’\-]+,\s*[A-Z](?:\.|[A-Z]?\.)")
 _ACL_REF = re.compile(
-    r"^\s*(?P<authors>[A-ZÀ-ÖØ-Þ][^\n]{2,180}?)\.\s+"
+    r"^\s*(?P<authors>[A-ZÀ-ÖØ-Þ][^\n]{2,450}?)\.\s+"
     r"(?P<year>(?:19|20)\d{2}[a-z]?)\.\s+\S",
 )
 _SURNAME = (
@@ -229,9 +230,18 @@ def _parse_references(lines: list[_Line]) -> tuple[ReferenceCandidate, ...]:
     authors = ""
     year = ""
     acl = False
+    layout = False
     numeric_style = sum(bool(_NUMERIC_REF.match(line.text.strip())) for line in lines[:30]) >= 2
     structural_style = sum(bool(_STRUCT_REF.match(line.text.strip())) for line in lines[:30]) >= 2
     acl_style = any(_ACL_REF.match(line.text.strip()) for line in lines[:3])
+    first_x = next((line.bbox[0] for line in lines if line.bbox and line.line_number == 1), None)
+    layout_style = bool(
+        first_x is not None and not (numeric_style or structural_style or acl_style)
+        and sum(bool(line.bbox and line.line_number == 1
+                     and abs(line.bbox[0] - first_x) < 3) for line in lines[:45]) >= 4
+        and sum(bool(line.bbox and line.line_number == 1
+                     and line.bbox[0] > first_x + 7) for line in lines[:45]) >= 2
+    )
     last_numeric_index = max(
         (index for index, line in enumerate(lines) if _NUMERIC_REF.match(line.text.strip())),
         default=-1,
@@ -242,12 +252,21 @@ def _parse_references(lines: list[_Line]) -> tuple[ReferenceCandidate, ...]:
             raw = " ".join(line.text.strip() for line in current)
             if any(line.page is not None for line in current):
                 raw = _repair_pdf_reference_url_gaps(raw)
-            entries.append(_reference(raw, current_id, _locations(current), authors, year, acl))
+            entry_year = year
+            if layout:
+                bibliography = re.split(r"\b(?:URL|doi:)\s+", raw, maxsplit=1, flags=re.I)[0]
+                years = re.findall(r"(?<!\d)(?:19|20)\d{2}[a-z]?(?!\d)", bibliography)
+                entry_year = years[-1] if years else ""
+            entries.append(_reference(raw, current_id, _locations(current), authors, entry_year,
+                                      acl or layout))
 
     for index, line in enumerate(lines):
         text = line.text.strip()
         if not text:
             continue
+        if (line.page is not None and line.bbox and re.fullmatch(r"\d{1,5}", text)
+                and line.bbox[1] > 740):
+            continue  # Printed page number at the bottom margin.
         if _PDF_LICENSE_FOOTER.match(text):
             # A repeated PDF download/license line is never bibliography text.
             # After the final numbered item, it also marks the end of the list.
@@ -258,11 +277,23 @@ def _parse_references(lines: list[_Line]) -> tuple[ReferenceCandidate, ...]:
             break
         if _REFERENCE_END_NOTICE.match(text):
             break
+        next_line = lines[index + 1] if index + 1 < len(lines) else None
+        if (entries and line.page is not None and (
+                _APPENDIX_HEADING.fullmatch(text)
+                or (re.fullmatch(r"[A-Z]", text) and next_line
+                    and next_line.block_id == line.block_id
+                    and _APPENDIX_HEADING.fullmatch(text + " " + next_line.text.strip())))):
+            break
         if (numeric_style and index > last_numeric_index and current and line.page
                 and current[-1].page and line.page > current[-1].page
                 and _AUTHOR_BIO_START.match(text)):
             break
-        if re.match(r"^\d+[.)]\s+Language Resource References\s*$", text, re.I):
+        secondary_heading = re.match(r"^\d+[.)]\s+Language Resource References\s*$", text, re.I)
+        if (not secondary_heading and re.fullmatch(r"\d+[.)]", text)
+                and index + 1 < len(lines)
+                and re.fullmatch(r"Language Resource References", lines[index + 1].text.strip(), re.I)):
+            secondary_heading = True
+        if secondary_heading:
             flush()
             current = []
             continue
@@ -274,7 +305,16 @@ def _parse_references(lines: list[_Line]) -> tuple[ReferenceCandidate, ...]:
         structural = None if number else _STRUCT_REF.match(text)
         author = None if numeric_style or structural_style or acl_style or number or structural else _AUTHOR_REF.match(text)
         apa_lookahead = " ".join(item.text.strip() for item in lines[index:index + 7])
-        acl_lookahead = " ".join(item.text.strip() for item in lines[index:index + 3])
+        acl_window = [line]
+        for next_line in lines[index + 1:index + 40]:
+            if (line.page is not None and next_line.bbox and line.bbox
+                    and next_line.line_number == 1
+                    and next_line.block_id != line.block_id
+                    and (next_line.page != line.page
+                         or next_line.bbox[0] <= line.bbox[0] + 5)):
+                break  # The next outdented PDF block begins another entry.
+            acl_window.append(next_line)
+        acl_lookahead = " ".join(item.text.strip() for item in acl_window)
         if not author and not (numeric_style or structural_style or acl_style or number or structural):
             if _AUTHOR_LIST_START.match(text):
                 author = _AUTHOR_REF.match(apa_lookahead)
@@ -285,15 +325,37 @@ def _parse_references(lines: list[_Line]) -> tuple[ReferenceCandidate, ...]:
         acl_author = None
         if not (numeric_style or structural_style or number or structural or author
                 or text.lower().endswith("references")):
-            acl_author = _ACL_REF.match(text)
-            if not acl_author and not text.endswith("."):
+            continuation_indent = bool(
+                line.bbox and current and current[-1].bbox
+                and line.page == current[-1].page
+                and line.bbox[1] >= current[-1].bbox[1] - 5
+                and line.bbox[0] > current[-1].bbox[0] + 5
+            )
+            can_start = not continuation_indent and (line.page is None or line.line_number == 1)
+            acl_author = _ACL_REF.match(text) if can_start else None
+            # ACL bibliographies often end an author/year block with a period,
+            # then put the title in the next PDF block.  A new entry is also
+            # commonly outdented from the previous entry's continuation.
+            outdented = bool(
+                line.bbox and current and current[-1].bbox
+                and line.page == current[-1].page
+                and line.bbox[0] + 5 < current[-1].bbox[0]
+            )
+            year_line = bool(re.search(r"\b(?:19|20)\d{2}[a-z]?\.\s*$", text))
+            if not acl_author and can_start and (
+                    not text.endswith(".") or year_line or outdented or not current):
                 acl_author = _ACL_REF.match(acl_lookahead)
             if (acl_author and current and len(current) <= 2 and year == acl_author["year"]
                     and not _ACL_REF.match(current[0].text)):
                 acl_author = None  # Continuation of an author list split by a PDF block.
-        if number or structural or author or acl_author:
+        layout_start = bool(
+            layout_style and line.bbox and line.line_number == 1
+            and abs(line.bbox[0] - first_x) < 3
+        )
+        if number or structural or author or acl_author or layout_start:
             flush()
             current = [line]
+            layout = bool(layout_start and not (number or structural or author or acl_author))
             if number:
                 base_id = "ref_n_" + (number["bracket"] or number["plain"])
                 duplicates = sum(ref.ref_id == base_id or ref.ref_id.startswith(base_id + "_dup")
@@ -309,7 +371,13 @@ def _parse_references(lines: list[_Line]) -> tuple[ReferenceCandidate, ...]:
             else:
                 current_id = f"ref_a_{len(entries) + 1:03d}"
                 match = author or acl_author
-                authors, year, acl = match["authors"], match["year"], bool(acl_author)
+                if match:
+                    authors, year, acl = match["authors"], match["year"], bool(acl_author)
+                else:
+                    first_author = text.split(",", 1)[0].split(".", 1)[0]
+                    first_author = re.sub(r"\s+et\s+al$", "", first_author, flags=re.I)
+                    first_author = re.sub(r"(?<=[A-Za-z])(?:˘|´|`|˜)(?=[A-Za-z])", "", first_author)
+                    authors, year, acl = first_author, "", False
         elif current:
             current.append(line)
     flush()

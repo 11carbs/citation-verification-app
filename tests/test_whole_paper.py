@@ -2,7 +2,7 @@
 
 from io import BytesIO
 
-from src.document_conversion import convert_document, convert_pasted_paper
+from src.document_conversion import ConvertedDocument, DocumentBlock, convert_document, convert_pasted_paper
 from src.whole_paper import _repair_pdf_reference_url_gaps, extract_whole_paper
 
 
@@ -56,6 +56,54 @@ van Rensburg, L. J. J. (2025). AI-powered citation auditing. Journal.
     assert outcome.references[0].authors == ("van Rensburg",)
     assert [pair.match_status for pair in outcome.pairs] == ["matched", "matched"]
     assert all(pair.reference.ref_id == "ref_a_001" for pair in outcome.pairs)
+
+
+def test_pdf_acl_references_split_at_author_year_blocks_and_stop_before_appendix():
+    contents = [
+        (1, 72, 40, "Bibliographical References"),
+        (1, 72, 70, "AI@Meta. 2024. The llama 3 herd of models."),
+        (1, 72, 90, "Frederique Bordignon. 2022."),
+        (1, 82, 102, "Critical citations in knowledge construction."),
+        (1, 306, 70, "DeepSeek-AI. 2025. Deepseek-v3.2-exp: Boosting long-context efficiency."),
+        (1, 306, 90, "Claire Glenton and Benedicte Carlsen. 2019."),
+        (1, 316, 102, "When normal becomes normative. Journal."),
+        (2, 72, 70, "A\nModel implementation details"),
+        (2, 72, 90, "This appendix is not a reference."),
+    ]
+    blocks = tuple(DocumentBlock(f"block_{i:04d}", content, f"page:{page}/block:{i}", page,
+                                 (x, y, x + 200, y + 10))
+                   for i, (page, x, y, content) in enumerate(contents, 1))
+    document = ConvertedDocument("doc_test", "study.pdf", "pdf", "", blocks, (), "test")
+    refs = extract_whole_paper(document).references
+    assert len(refs) == 4
+    assert [ref.raw_text.split(". ", 1)[0] for ref in refs] == [
+        "AI@Meta", "Frederique Bordignon", "DeepSeek-AI",
+        "Claire Glenton and Benedicte Carlsen",
+    ]
+    assert all("appendix" not in ref.raw_text.lower() for ref in refs)
+
+
+def test_pdf_hanging_indent_references_split_with_year_at_end():
+    contents = [
+        (108, 40, "REFERENCES"),
+        (108, 70, "Martín Abadi, Andy Chu,"),
+        (118, 82, "and Li Zhang. Source title, 2016."),
+        (108, 105, "Ann Cavoukian et al. Privacy by design,"),
+        (118, 117, "Information and privacy commissioner, 2009."),
+        (108, 140, "Fast Company. Article title, 2025."),
+        (108, 165, "Di Jin, Eileen Pan, and Peter Szolovits."),
+        (118, 177, "arXiv:2009.13081, 2020. URL https://arxiv.org/abs/2009.13081"),
+        (301, 752, "10"),
+    ]
+    blocks = tuple(DocumentBlock(f"block_{i:04d}", content, f"page:1/block:{i}", 1,
+                                 (x, y, x + 200, y + 10))
+                   for i, (x, y, content) in enumerate(contents, 1))
+    document = ConvertedDocument("doc_test", "study.pdf", "pdf", "", blocks, (), "test")
+    refs = extract_whole_paper(document).references
+    assert len(refs) == 4
+    assert [ref.year for ref in refs] == ["2016", "2009", "2025", "2020"]
+    assert refs[1].authors == ("Cavoukian",)
+    assert all("10" != ref.raw_text for ref in refs)
 
 
 def test_acl_bibliographical_references_and_full_name_authors():
