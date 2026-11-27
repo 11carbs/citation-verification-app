@@ -156,3 +156,50 @@ def pairing_preview_csv_bytes(bundle: HandoffBundle) -> bytes:
     writer.writeheader()
     writer.writerows(pairing_preview_rows(bundle))
     return output.getvalue().encode("utf-8-sig")
+
+
+def whole_paper_result_rows(bundle: HandoffBundle) -> list[dict[str, str]]:
+    """Show the legacy A/B result columns without inventing model judgments."""
+    result = []
+    for row in pairing_preview_rows(bundle):
+        matched = row["match_status"] == "matched"
+        ref_id = row["ref_id"]
+        result.append({
+            "pair_id": row["pair_id"],
+            "引用陳述": row["claim_text"],
+            "引用標記": row["citation_marker"],
+            "ref 配對狀態": "已配對" if matched else "待人工核對",
+            "ref ID（系統）": ref_id,
+            "原文編號": ref_id.removeprefix("ref_n_") if ref_id.startswith("ref_n_") else "",
+            "被引文獻": row["ref_raw"],
+            "錯誤狀態": row["error_message"],
+            "來源狀態": "待查詢" if matched else "",
+            "方法 A 摘要來源": "",
+            "方法 A 支持分數": "",
+            "方法 A 支持分類（暫定）": "",
+            "方法 A 判斷依據": "",
+            "方法 A 篇名判斷": "",
+            "方法 A 判斷狀態": "尚未執行" if matched else "待人工核對",
+            "方法 A 證據解讀": "",
+            "方法 A 摘要節錄": "",
+            "方法 B 支持分數": "",
+            "方法 B 支持分類（暫定）": "",
+            "方法 B 判斷依據": "",
+            "方法 B 判斷狀態": "尚未執行" if matched else "待人工核對",
+            "摘要查詢紀錄": "",
+            "摘要來源網址": "",
+            "陳述原文位置": row["source_locations"],
+        })
+    return result
+
+
+def whole_paper_result_csv_bytes(bundle: HandoffBundle) -> bytes:
+    """Export exactly the visible result table, including blank A/B fields."""
+    rows = whole_paper_result_rows(bundle)
+    if not rows:
+        return b""
+    output = StringIO(newline="")
+    writer = csv.DictWriter(output, fieldnames=rows[0].keys())
+    writer.writeheader()
+    writer.writerows(rows)
+    return output.getvalue().encode("utf-8-sig")

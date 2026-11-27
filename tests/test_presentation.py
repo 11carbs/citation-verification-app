@@ -7,6 +7,7 @@ from src.presentation import (
     build_output_dataframe,
     dataframe_to_csv_bytes,
     support_band_style,
+    style_output_dataframe,
 )
 from src.schemas import AnalysisRow
 
@@ -43,6 +44,15 @@ def test_support_band_colors_are_distinct() -> None:
     assert "#FDECEC" in unsupported
     assert len({supported, uncertain, unsupported}) == 3
     assert support_band_style("") == ""
+
+
+def test_whole_paper_support_classification_uses_same_colors() -> None:
+    frame = pd.DataFrame({"方法 A 支持分類（暫定）": ["支持", "不確定", "不支持"]})
+    styled = style_output_dataframe(frame, ["方法 A 支持分類（暫定）"])
+    html = styled.to_html()
+    assert "#E8F5E9" in html
+    assert "#FFF3E0" in html
+    assert "#FDECEC" in html
 
 
 def test_csv_export_has_bom_header_and_one_line_per_row() -> None:

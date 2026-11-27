@@ -63,13 +63,26 @@ class _Mention:
 
 _REF_HEADING = re.compile(
     r"^\s*(?:#{1,6}\s*)?(?:\*\*)?(?:(?:\d+|[IVX]+)[.)]\s+)?"
-    r"(?:references|bibliography|works cited|參考文獻|参考文献)(?:\*\*)?\s*:?\s*$",
+    r"(?:references|bibliography|bibliographical references|works cited|參考文獻|参考文献)(?:\*\*)?\s*:?\s*$",
     re.I,
 )
-_NUMERIC_REF = re.compile(r"^\s*(?:\[(?P<bracket>\d+)\]|(?P<plain>\d+)[.)])\s+(?P<entry>\S.*)$")
+_NUMERIC_REF = re.compile(r"^\s*(?:\[(?P<bracket>\d+)\]|(?P<plain>[1-9]\d{0,2})[.)])(?:\s+(?P<entry>\S.*))?\s*$")
+_PDF_LICENSE_FOOTER = re.compile(
+    r"^(?:Authorized licensed use limited to:|Downloaded on .+ from IEEE Xplore\.|Restrictions apply\.)",
+    re.I,
+)
+_REFERENCE_END_HEADING = re.compile(
+    r"^(?:author biographies|biographies|about the authors|author information|作者簡介|著者簡介)$",
+    re.I,
+)
+_REFERENCE_END_NOTICE = re.compile(r"^How to cite this article\s*:", re.I)
+_AUTHOR_BIO_START = re.compile(
+    r"^[A-Z][A-Za-z .'-]{2,80}(?:\s*\([^)]{1,45}\))?\s+received\s+(?:his|her|the|a)\b",
+    re.I,
+)
 _NOTE_REF = re.compile(r"^\s*\[\^(?P<key>[A-Za-z0-9_-]+)\]:\s*(?P<entry>\S.*)$")
 _NOTE_MARKER = re.compile(r"\[\^(?P<key>[A-Za-z0-9_-]+)\](?!:)")
-_STRUCT_REF = re.compile(r"^\s*\[@(?P<key>[A-Za-z0-9_-]+)\]\s+(?P<entry>\S.*)$")
+_STRUCT_REF = re.compile(r"^\s*\[@(?P<key>[A-Za-z0-9_-]+)\](?:\s+(?P<entry>\S.*))?\s*$")
 _STRUCT_MARKER = re.compile(r"\[@(?P<key>[A-Za-z0-9_-]+)\]")
 _SUPERSCRIPT = re.compile(r"\^\{(?P<body>\d+(?:\s*[,;–-]\s*\d+)*)\}")
 _PAREN_NUMERIC = re.compile(r"\((?P<body>\d{1,3}(?:\s*[-–—]\s*\d{1,3})?"
@@ -77,21 +90,30 @@ _PAREN_NUMERIC = re.compile(r"\((?P<body>\d{1,3}(?:\s*[-–—]\s*\d{1,3})?"
 _UNICODE_SUP = re.compile(r"(?<=[.!?。！？])(?P<body>[⁰¹²³⁴⁵⁶⁷⁸⁹]+)(?=[.,;:!?。！？\s]|$)")
 _SUP_TRANSLATION = str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹", "0123456789")
 _AUTHOR_REF = re.compile(
-    r"^\s*(?P<authors>[A-ZÀ-ÖØ-Þ][^()\n]{1,120}?)\s*"
+    r"^\s*(?P<authors>[A-ZÀ-ÖØ-Þ][^()\n]{1,450}?)\s*"
     r"\((?P<year>(?:19|20)\d{2}[a-z]?)\)\s*[.,]?\s+\S",
     re.I,
 )
-_PAREN_CITATION = re.compile(r"\((?P<body>[^()]{1,180})\)")
+_AUTHOR_LIST_START = re.compile(r"^[A-ZÀ-ÖØ-Þ][\w'’\-]+,\s*[A-Z](?:\.|[A-Z]?\.)")
+_ACL_REF = re.compile(
+    r"^\s*(?P<authors>[A-ZÀ-ÖØ-Þ][^\n]{2,180}?)\.\s+"
+    r"(?P<year>(?:19|20)\d{2}[a-z]?)\.\s+\S",
+)
+_SURNAME = (
+    r"(?:(?:van(?:\s+der)?|von|de(?:\s+la)?|del|da|di|le|la)\s+)?"
+    r"[A-ZÀ-ÖØ-Þ][\w'’\-]+"
+)
+_PAREN_CITATION = re.compile(r"(?:\((?P<body>[^()]{1,180})\)|（(?P<wide_body>[^（）]{1,180})）)")
 _PAREN_ITEM = re.compile(
-    r"^\s*(?P<first>[A-ZÀ-ÖØ-Þ][\w'’\-]+)"
-    r"(?:\s*(?:&|and)\s*(?P<second>[A-ZÀ-ÖØ-Þ][\w'’\-]+)|\s+et\s+al\.)?"
-    r"\s*,\s*(?P<year>(?:19|20)\d{2}[a-z]?)(?:\s*,.*)?$",
+    rf"^\s*(?P<first>{_SURNAME})"
+    rf"(?:\s*(?:&|and)\s*(?P<second>{_SURNAME})|\s+et\s+al\.|\s+等人)?"
+    r"\s*[,，]\s*(?P<year>(?:19|20)\d{2}[a-z]?)(?:\s*[,，].*)?$",
     re.I,
 )
 _NARRATIVE = re.compile(
-    r"\b(?P<first>[A-ZÀ-ÖØ-Þ][\w'’\-]+)"
-    r"(?:\s+(?:&|and)\s+(?P<second>[A-ZÀ-ÖØ-Þ][\w'’\-]+)|\s+et\s+al\.)?"
-    r"\s*\((?P<year>(?:19|20)\d{2}[a-z]?)\)",
+    rf"\b(?P<first>{_SURNAME})"
+    rf"(?:\s+(?:&|and)\s+(?P<second>{_SURNAME})|\s+et\s+al\.|\s+等人)?"
+    r"\s*[（(](?P<year>(?:19|20)\d{2}[a-z]?)[）)]",
     re.I,
 )
 _DOI = re.compile(r"\b10\.\d{4,9}/[^\s,;]+", re.I)
@@ -159,23 +181,45 @@ def _segment_locations(paragraph: _Paragraph, start: int | None,
 
 def _authors(prefix: str) -> tuple[str, ...]:
     # APA entries usually have "Surname, I." for every author.
-    names = re.findall(r"\b([A-ZÀ-ÖØ-Þ][\w'’\-]+),\s*[A-Z]\.", prefix, re.I)
+    names = re.findall(rf"\b({_SURNAME}),\s*[A-Z]\.", prefix, re.I)
     if not names:
         names = re.findall(r"\b([A-ZÀ-ÖØ-Þ][\w'’\-]+)\b", prefix, re.I)
         names = [name for name in names if name.casefold() not in {"and", "et", "al"}]
     return tuple(names)
 
 
+def _acl_authors(prefix: str) -> tuple[str, ...]:
+    names = []
+    for person in re.split(r"\s*,\s*|\s+and\s+", prefix):
+        words = re.findall(r"[A-ZÀ-ÖØ-Þ][\w'’\-]+", person, re.I)
+        if words:
+            names.append(words[-1])
+    return tuple(names)
+
+
 def _reference(raw: str, ref_id: str, locations: tuple[SourceLocation, ...],
-               author_prefix: str = "", year: str = "") -> ReferenceCandidate:
+               author_prefix: str = "", year: str = "", acl: bool = False) -> ReferenceCandidate:
     doi_match = _DOI.search(raw)
     url_match = _URL.search(raw)
     return ReferenceCandidate(
-        ref_id=ref_id, raw_text=raw, authors=_authors(author_prefix) if author_prefix else (),
+        ref_id=ref_id, raw_text=raw,
+        authors=(_acl_authors(author_prefix) if acl else _authors(author_prefix)) if author_prefix else (),
         year=year, doi=doi_match.group().rstrip(".,)") if doi_match else "",
         url=url_match.group().rstrip(".,)") if url_match else "",
         source_locations=locations,
     )
+
+
+def _repair_pdf_reference_url_gaps(raw: str) -> str:
+    """Join URL fragments separated only by PDF line breaks."""
+    raw = re.sub(r"\bhtt-\s+ps://", "https://", raw, flags=re.I)
+    raw = re.sub(r"(https?://\S*[/])\s+(?=[A-Za-z0-9])", r"\1", raw, flags=re.I)
+    raw = re.sub(r"(https?://\S*[-])\s+(?=[A-Za-z0-9])", r"\1", raw, flags=re.I)
+    raw = re.sub(
+        r"(https?://\S+\.)\s+(?=(?:com|org|net|edu|gov|io|ai|app|dev)(?:/|\b)|[A-Za-z0-9-]+\.[A-Za-z]{2,}(?:/|\b))",
+        r"\1", raw, flags=re.I,
+    )
+    return raw
 
 
 def _parse_references(lines: list[_Line]) -> tuple[ReferenceCandidate, ...]:
@@ -184,20 +228,70 @@ def _parse_references(lines: list[_Line]) -> tuple[ReferenceCandidate, ...]:
     current_id = ""
     authors = ""
     year = ""
+    acl = False
+    numeric_style = sum(bool(_NUMERIC_REF.match(line.text.strip())) for line in lines[:30]) >= 2
+    structural_style = sum(bool(_STRUCT_REF.match(line.text.strip())) for line in lines[:30]) >= 2
+    acl_style = any(_ACL_REF.match(line.text.strip()) for line in lines[:3])
+    last_numeric_index = max(
+        (index for index, line in enumerate(lines) if _NUMERIC_REF.match(line.text.strip())),
+        default=-1,
+    )
 
     def flush() -> None:
         if current:
-            entries.append(_reference(" ".join(line.text.strip() for line in current),
-                                      current_id, _locations(current), authors, year))
+            raw = " ".join(line.text.strip() for line in current)
+            if any(line.page is not None for line in current):
+                raw = _repair_pdf_reference_url_gaps(raw)
+            entries.append(_reference(raw, current_id, _locations(current), authors, year, acl))
 
-    for line in lines:
+    for index, line in enumerate(lines):
         text = line.text.strip()
         if not text:
             continue
+        if _PDF_LICENSE_FOOTER.match(text):
+            # A repeated PDF download/license line is never bibliography text.
+            # After the final numbered item, it also marks the end of the list.
+            if index > last_numeric_index:
+                break
+            continue
+        if _REFERENCE_END_HEADING.fullmatch(text):
+            break
+        if _REFERENCE_END_NOTICE.match(text):
+            break
+        if (numeric_style and index > last_numeric_index and current and line.page
+                and current[-1].page and line.page > current[-1].page
+                and _AUTHOR_BIO_START.match(text)):
+            break
+        if re.match(r"^\d+[.)]\s+Language Resource References\s*$", text, re.I):
+            flush()
+            current = []
+            continue
         number = _NUMERIC_REF.match(text)
+        if number and 1900 <= int(number["bracket"] or number["plain"]) <= 2099:
+            number = None  # A broken year/DOI line is not a bibliography number.
+        if number and number["plain"] and (number["entry"] or "").lower().startswith(("http://", "https://")):
+            number = None  # A DOI/URL line fragment is not a new reference.
         structural = None if number else _STRUCT_REF.match(text)
-        author = None if number or structural else _AUTHOR_REF.match(text)
-        if number or structural or author:
+        author = None if numeric_style or structural_style or acl_style or number or structural else _AUTHOR_REF.match(text)
+        apa_lookahead = " ".join(item.text.strip() for item in lines[index:index + 7])
+        acl_lookahead = " ".join(item.text.strip() for item in lines[index:index + 3])
+        if not author and not (numeric_style or structural_style or acl_style or number or structural):
+            if _AUTHOR_LIST_START.match(text):
+                author = _AUTHOR_REF.match(apa_lookahead)
+        if (author and current and year == author["year"]
+                and not re.search(r"\((?:19|20)\d{2}[a-z]?\)",
+                                  " ".join(item.text for item in current), re.I)):
+            author = None  # The year belongs to an author list spanning lines.
+        acl_author = None
+        if not (numeric_style or structural_style or number or structural or author
+                or text.lower().endswith("references")):
+            acl_author = _ACL_REF.match(text)
+            if not acl_author and not text.endswith("."):
+                acl_author = _ACL_REF.match(acl_lookahead)
+            if (acl_author and current and len(current) <= 2 and year == acl_author["year"]
+                    and not _ACL_REF.match(current[0].text)):
+                acl_author = None  # Continuation of an author list split by a PDF block.
+        if number or structural or author or acl_author:
             flush()
             current = [line]
             if number:
@@ -205,16 +299,17 @@ def _parse_references(lines: list[_Line]) -> tuple[ReferenceCandidate, ...]:
                 duplicates = sum(ref.ref_id == base_id or ref.ref_id.startswith(base_id + "_dup")
                                  for ref in entries)
                 current_id = base_id if duplicates == 0 else f"{base_id}_dup{duplicates + 1}"
-                authors, year = "", ""
+                authors, year, acl = "", "", False
             elif structural:
                 base_id = "ref_struct_" + structural["key"]
                 duplicates = sum(ref.ref_id == base_id or ref.ref_id.startswith(base_id + "_dup")
                                  for ref in entries)
                 current_id = base_id if duplicates == 0 else f"{base_id}_dup{duplicates + 1}"
-                authors, year = "", ""
+                authors, year, acl = "", "", False
             else:
                 current_id = f"ref_a_{len(entries) + 1:03d}"
-                authors, year = author["authors"], author["year"]
+                match = author or acl_author
+                authors, year, acl = match["authors"], match["year"], bool(acl_author)
         elif current:
             current.append(line)
     flush()
@@ -233,7 +328,7 @@ def _parse_note_references(lines: list[_Line]) -> tuple[ReferenceCandidate, ...]
     return tuple(notes)
 
 
-def _mentions(segment: str) -> tuple[list[_Mention], list[str], list[str]]:
+def _mentions(segment: str, *, allow_parenthesized_numeric: bool = True) -> tuple[list[_Mention], list[str], list[str]]:
     found: list[_Mention] = []
     seen: set[tuple] = set()
     duplicates: list[str] = []
@@ -282,7 +377,7 @@ def _mentions(segment: str) -> tuple[list[_Mention], list[str], list[str]]:
         add(_Mention(match.group(), start=match.start(),
                      number=int(match["body"].translate(_SUP_TRANSLATION)),
                      uncertain_numeric=True))
-    for match in _PAREN_NUMERIC.finditer(segment):
+    for match in _PAREN_NUMERIC.finditer(segment) if allow_parenthesized_numeric else ():
         if re.search(r"\b(?:Eq(?:uation)?|Fig(?:ure)?|Table)\.?\s*$",
                      segment[:match.start()], re.I):
             continue
@@ -299,11 +394,12 @@ def _mentions(segment: str) -> tuple[list[_Mention], list[str], list[str]]:
     for match in _STRUCT_MARKER.finditer(segment):
         add(_Mention(match.group(), start=match.start(), target_id=match["key"]))
     for match in _PAREN_CITATION.finditer(segment):
-        for item in match["body"].split(";"):
+        for item in (match["body"] or match["wide_body"]).split(";"):
             if parsed := _PAREN_ITEM.fullmatch(item.strip()):
                 add(_Mention(match.group(), start=match.start(), first_author=parsed["first"],
                              second_author=parsed["second"] or "", year=parsed["year"]))
-            elif _LIKELY_AUTHOR_YEAR.fullmatch(item.strip()):
+            elif (_LIKELY_AUTHOR_YEAR.fullmatch(item.strip())
+                  and not item.strip().split()[0].isupper()):
                 add(_Mention(item.strip(), start=match.start(), unparsed=True))
                 invalid.append(item.strip())
     for match in _NARRATIVE.finditer(segment):
@@ -345,9 +441,25 @@ def extract_whole_paper(document: ConvertedDocument) -> WholePaperOutcome:
     section_found = bool(headings or note_references)
     boundary = headings[-1] if headings else len(lines)
     body = _paragraphs(lines[:boundary])
-    references = (_parse_references(lines[boundary + 1:]) if headings else ()) + note_references
+    reference_lines = lines[boundary + 1:] if headings else []
+    for index, line in enumerate(reference_lines):
+        if re.match(r"^\s*(?:APPENDIX\b|APPENDICES\b)", line.text, re.I):
+            reference_lines = reference_lines[:index]
+            break
+    parsed_references = (_parse_references(reference_lines) if headings else ()) + note_references
+    incomplete_references = tuple(
+        ref for ref in parsed_references
+        if re.fullmatch(r"(?:\[\d+\]|\[@[A-Za-z0-9_-]+\])", ref.raw_text.strip())
+    )
+    references = tuple(ref for ref in parsed_references if ref not in incomplete_references)
+    numeric_references_present = any(ref.ref_id.startswith("ref_n_") for ref in references)
     issues: list[ExtractionIssue] = []
     pairs: list[CitationHandoff] = []
+    for ref in incomplete_references:
+        issues.append(ExtractionIssue(
+            "INCOMPLETE_REFERENCE_ENTRY",
+            f"{ref.ref_id} 只有引用標記、沒有書目內容，已排除自動配對；請核對原始文件。",
+        ))
     if not section_found:
         issues.append(ExtractionIssue("NO_REFERENCE_SECTION", "找不到獨立的參考文獻標題；引用會標示為缺少 ref。"))
     elif not references:
@@ -361,7 +473,9 @@ def extract_whole_paper(document: ConvertedDocument) -> WholePaperOutcome:
             end = start + len(segment) if start >= 0 else None
             if end is not None:
                 cursor = end
-            mentions, duplicates, invalid = _mentions(segment)
+            mentions, duplicates, invalid = _mentions(
+                segment, allow_parenthesized_numeric=numeric_references_present,
+            )
             for marker in dict.fromkeys(duplicates):
                 issues.append(ExtractionIssue("REPEATED_REFERENCE_IN_CLAIM",
                                               f"同一引用陳述重複出現 {marker}，已合併為一筆配對。"))

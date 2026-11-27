@@ -125,10 +125,13 @@ def support_band_style(value: object) -> str:
     return f"background-color: {background}; color: {foreground}; font-weight: 600"
 
 
-def style_output_dataframe(frame: pd.DataFrame) -> pd.io.formats.style.Styler:
+def style_output_dataframe(
+    frame: pd.DataFrame, band_columns: list[str] | None = None,
+) -> pd.io.formats.style.Styler:
     """Color only the two support-band columns, leaving evidence data intact."""
 
-    band_columns = ["方法 A 證據層級", "方法 B 證據層級"]
+    if band_columns is None:
+        band_columns = ["方法 A 證據層級", "方法 B 證據層級"]
     return frame.style.map(support_band_style, subset=band_columns)
 
 

@@ -3,7 +3,7 @@
 from io import BytesIO
 
 from src.document_conversion import convert_document, convert_pasted_paper
-from src.whole_paper import extract_whole_paper
+from src.whole_paper import _repair_pdf_reference_url_gaps, extract_whole_paper
 
 
 def test_numeric_citations_match_only_cited_refs_and_expand_range():
@@ -41,6 +41,159 @@ Li, K., & Chen, Y. (2023). An extension. Journal.
     ]
     assert len({pair.claim_id for pair in result.pairs}) == 2
     assert all(pair.match_status == "matched" for pair in result.pairs)
+
+
+def test_author_surname_particle_matches_reference_even_after_pdf_line_break():
+    paper = """The work exists (van
+Rensburg, 2025).
+
+van Rensburg (2025) discusses verification.
+
+References
+van Rensburg, L. J. J. (2025). AI-powered citation auditing. Journal.
+"""
+    outcome = extract_whole_paper(convert_pasted_paper(paper))
+    assert outcome.references[0].authors == ("van Rensburg",)
+    assert [pair.match_status for pair in outcome.pairs] == ["matched", "matched"]
+    assert all(pair.reference.ref_id == "ref_a_001" for pair in outcome.pairs)
+
+
+def test_acl_bibliographical_references_and_full_name_authors():
+    paper = """A finding was reported (Abalkina & Bishop, 2023).
+
+Bibliographical References
+Anna Abalkina and Dorothy Bishop. 2023. Paper mills. Journal.
+Ayush Agrawal, Mirac Suzgun, and Adam Kalai. 2024. A second paper.
+"""
+    outcome = extract_whole_paper(convert_pasted_paper(paper))
+    assert [reference.authors for reference in outcome.references] == [
+        ("Abalkina", "Bishop"), ("Agrawal", "Suzgun", "Kalai")]
+    assert outcome.pairs[0].match_status == "matched"
+
+
+def test_chinese_prose_with_fullwidth_author_year_parentheses():
+    paper = """Liu 等人（2026）提出資料集。另一結果見（Wang，2024）。
+
+參考文獻
+Liu, Q. (2026). Dataset paper.
+Wang, T. (2024). Other paper.
+"""
+    outcome = extract_whole_paper(convert_pasted_paper(paper))
+    assert [pair.reference.ref_id for pair in outcome.pairs] == ["ref_a_001", "ref_a_002"]
+    assert all(pair.match_status == "matched" for pair in outcome.pairs)
+
+
+def test_numeric_references_on_separate_lines_ignore_year_and_appendix_samples():
+    paper = """A finding [1] was reported.
+
+References
+1.
+Author One. Title.
+2. Author Two. Title.
+2023. DOI continuation text.
+Appendix A: Example references
+[1] Fabricated example.
+"""
+    outcome = extract_whole_paper(convert_pasted_paper(paper))
+    assert [reference.ref_id for reference in outcome.references] == ["ref_n_1", "ref_n_2"]
+    assert "Author One" in outcome.pairs[0].reference.raw_text
+    assert outcome.pairs[0].match_status == "matched"
+
+
+def test_long_publication_identifier_is_not_a_reference_number():
+    paper = """A claim [1].
+
+References
+13081. Identifier continuation, not a reference.
+08223. Another identifier continuation.
+9798400714542. Publisher identifier.
+"""
+    outcome = extract_whole_paper(convert_pasted_paper(paper))
+    assert outcome.references == ()
+    assert outcome.pairs[0].match_status == "missing_reference"
+
+
+def test_pdf_license_footer_stops_last_reference_before_author_biography():
+    paper = """Claim [1].
+
+References
+[1] A. Author, "A source," 2026.
+Authorized licensed use limited to: University. Downloaded on November 16, 2026 from IEEE Xplore. Restrictions apply.
+MA et al.: PAPER TITLE
+Wanlun Ma (Member, IEEE) received the Bachelor's degree in engineering.
+"""
+    outcome = extract_whole_paper(convert_pasted_paper(paper))
+    assert len(outcome.references) == 1
+    assert outcome.references[0].raw_text == '[1] A. Author, "A source," 2026.'
+
+
+def test_marker_only_reference_is_flagged_and_not_used_as_evidence():
+    paper = """Claim [1] and [2].
+
+References
+[1]
+[2] B. Author, "Complete source," 2025.
+"""
+    outcome = extract_whole_paper(convert_pasted_paper(paper))
+    assert [ref.ref_id for ref in outcome.references] == ["ref_n_2"]
+    assert [pair.match_status for pair in outcome.pairs] == ["missing_reference", "matched"]
+    assert any(issue.code == "INCOMPLETE_REFERENCE_ENTRY" for issue in outcome.issues)
+
+
+def test_structured_reference_marker_stays_with_its_following_entry():
+    paper = """Claim [@B1].
+
+References
+[@B1]
+Agarwal S, Choubey L, Yu H. Automatically classifying citations. 2010.
+[@B2]
+Wang T. A second article. 2024.
+"""
+    outcome = extract_whole_paper(convert_pasted_paper(paper))
+    assert len(outcome.references) == 2
+    assert "Agarwal S" in outcome.references[0].raw_text
+    assert outcome.pairs[0].match_status == "matched"
+
+
+def test_pdf_reference_url_line_gaps_are_joined_without_swallowing_access_date():
+    raw = ("[29] Available: https://github.com/ badlogic/pi-mono. "
+           "Accessed on: Mar. 22, 2026. Other: https://www. example.org/ "
+           "Also: htt- ps://github. com/team/repo.")
+    fixed = _repair_pdf_reference_url_gaps(raw)
+    assert "https://github.com/badlogic/pi-mono. Accessed" in fixed
+    assert "https://www.example.org/" in fixed
+    assert "https://github.com/team/repo." in fixed
+
+
+def test_author_year_references_with_year_on_later_line_are_separate_entries():
+    paper = """A finding (Asai et al., 2026) and another (Bhattacharyya et al., 2023).
+
+References
+arXiv. (2026). API documentation.
+Asai, A., He, J., Shao, R., Shi, W., Singh, A., Chang, J. C., Lo, K.,
+Soldaini, L., Feldman, S., D'Arcy, M., Wadden, D., Latzke, M.,
+Sparks, J., Hwang, J. D., Kishore, V., Tian, M., Ji, P., Liu, S.,
+Tong, H., … Hajishirzi, H. (2026). A research paper. Journal.
+Bhattacharyya, M., Miller, V. M., Bhattacharyya, D., & Miller, L. E.
+(2023). Another research paper. Journal.
+How to cite this article: Example, A. (2026). This article.
+"""
+    outcome = extract_whole_paper(convert_pasted_paper(paper))
+    assert len(outcome.references) == 3
+    assert [ref.authors[0] for ref in outcome.references] == ["arXiv", "Asai", "Bhattacharyya"]
+    assert [pair.match_status for pair in outcome.pairs] == ["matched", "matched"]
+    assert all("How to cite" not in ref.raw_text for ref in outcome.references)
+
+
+def test_author_year_paper_does_not_turn_numbered_steps_into_citations():
+    paper = """The pipeline has (1) extraction and (2) verification.
+A venue name (RAAISA 2024) is not a reference. A result (Wang, 2024) is cited.
+
+References
+Wang, T. (2024). A source. Journal.
+"""
+    outcome = extract_whole_paper(convert_pasted_paper(paper))
+    assert [pair.citation_marker for pair in outcome.pairs] == ["(Wang, 2024)"]
 
 
 def test_ambiguous_author_year_is_not_arbitrarily_matched():
@@ -95,14 +248,11 @@ def test_numeric_reference_with_same_label_is_ambiguous():
     assert result.pairs[0].candidate_ref_ids == ("ref_n_1", "ref_n_1_dup2")
 
 
-def test_html_document_uses_same_extraction_pipeline():
-    html = ("<h1>Study</h1><p>A finding was reported (Wang, 2024).</p>"
-            "<h2>References</h2><p>Wang, T. (2024). Source.</p>")
-    converted = convert_document(html.encode(), "study.html")
-    result = extract_whole_paper(converted)
-    assert result.section_found
-    assert len(result.pairs) == 1
-    assert result.pairs[0].reference.raw_text.startswith("Wang, T.")
+def test_structured_ref_marker_can_be_on_its_own_line():
+    paper = "A finding [@R7].\n\nReferences\n[@R7]\nAuthor. Source title."
+    outcome = extract_whole_paper(convert_pasted_paper(paper))
+    assert outcome.pairs[0].reference.ref_id == "ref_struct_R7"
+    assert "Source title" in outcome.pairs[0].reference.raw_text
 
 
 def test_pdf_text_and_reference_heading():
@@ -114,16 +264,6 @@ def test_pdf_text_and_reference_heading():
     page.insert_text((72, 120), "References")
     page.insert_text((72, 145), "[1] A. Author, Source, 2024.")
     result = extract_whole_paper(convert_document(pdf.tobytes(), "study.pdf"))
-    assert result.section_found
-    assert len(result.pairs) == 1
-    assert result.pairs[0].reference.ref_id == "ref_n_1"
-
-
-def test_xml_ref_list_with_numeric_xref():
-    xml = ("<article><body><p>A claim <xref rid='r1'>[1]</xref>.</p></body>"
-           "<ref-list><title>References</title><ref id='r1'>"
-           "[1] A. Author, Source, 2024.</ref></ref-list></article>")
-    result = extract_whole_paper(convert_document(xml.encode(), "study.xml"))
     assert result.section_found
     assert len(result.pairs) == 1
     assert result.pairs[0].reference.ref_id == "ref_n_1"
@@ -212,30 +352,6 @@ def test_vancouver_parenthesized_numbers_and_superscript_numeric():
     ]
 
 
-def test_html_superscript_bibliography_link_and_footnote():
-    html = ("<p>One result<sup><a href='#ref1'>1</a></sup>. "
-            "Another claim<sup><a href='#fn2'>2</a></sup>.</p>"
-            "<h2>References</h2><p id='ref1'>[1] A. Author, Source.</p>"
-            "<section class='footnotes'><ol><li id='fn2'>2. B. Author, Footnote source.</li></ol></section>")
-    converted = convert_document(html.encode(), "study.html")
-    result = extract_whole_paper(converted)
-    assert [pair.match_status for pair in result.pairs] == ["matched", "matched"]
-    assert [pair.reference.ref_id for pair in result.pairs] == ["ref_n_1", "ref_note_fn2"]
-    assert result.pairs[1].reference.source_locations[0].locator == "html:note:fn2"
-
-
-def test_jats_bibliography_xref_and_footnote_xref_keep_targets():
-    xml = ("<article><body><p>A finding <xref ref-type='bibr' rid='R1'>1</xref> "
-           "and a note <xref ref-type='fn' rid='fn1'>1</xref>.</p>"
-           "<fn-group><fn id='fn1'><p>C. Author, Footnote source.</p></fn></fn-group></body>"
-           "<ref-list><title>References</title><ref id='R1'><label>1</label>"
-           "<mixed-citation>A. Author, Main source.</mixed-citation></ref></ref-list></article>")
-    converted = convert_document(xml.encode(), "study.xml")
-    result = extract_whole_paper(converted)
-    assert [pair.reference.ref_id for pair in result.pairs] == ["ref_n_1", "ref_note_fn1"]
-    assert result.pairs[1].reference.source_locations[0].locator.endswith("/fn[1]")
-
-
 def test_math_exponent_and_equation_number_are_not_citations():
     paper = ("The formula uses x^{2}, as in Eq. (1). A cited result.^{1}\n\n"
              "References\n[1] A. Author, Source.")
@@ -262,25 +378,6 @@ def test_pdf_small_raised_number_is_preserved_as_citation_when_adjacent():
     converted = convert_document(pdf.tobytes(), "raised.pdf")
     assert "Claim.^{1}" in converted.markdown
     result = extract_whole_paper(converted)
-    assert len(result.pairs) == 1
-    assert result.pairs[0].reference.ref_id == "ref_n_1"
-
-
-def test_jats_xref_with_hidden_label_uses_explicit_target_id():
-    xml = ("<article><body><p>A claim <xref ref-type='bibr' rid='R7'/></p></body>"
-           "<ref-list><title>References</title><ref id='R7'>"
-           "<mixed-citation>A. Author, Source.</mixed-citation></ref></ref-list></article>")
-    converted = convert_document(xml.encode(), "target.xml")
-    assert "[@R7]" in converted.markdown
-    result = extract_whole_paper(converted)
-    assert len(result.pairs) == 1
-    assert result.pairs[0].reference.ref_id == "ref_struct_R7"
-
-
-def test_html_ordered_reference_list_and_superscript_anchor():
-    html = ("<p>A result<sup><a href='#b1'>1</a></sup>.</p>"
-            "<h2>References</h2><ol><li id='b1'>A. Author, Source.</li></ol>")
-    result = extract_whole_paper(convert_document(html.encode(), "ordered.html"))
     assert len(result.pairs) == 1
     assert result.pairs[0].reference.ref_id == "ref_n_1"
 

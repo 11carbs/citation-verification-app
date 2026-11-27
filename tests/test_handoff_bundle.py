@@ -9,7 +9,7 @@ import pytest
 from src.document_conversion import convert_document, convert_pasted_paper
 from src.handoff_bundle import (
     HandoffValidationError, build_handoff_bundle, pairing_preview_csv_bytes,
-    pairing_preview_rows,
+    pairing_preview_rows, whole_paper_result_csv_bytes, whole_paper_result_rows,
 )
 from src.whole_paper import extract_whole_paper
 
@@ -61,6 +61,25 @@ def test_preview_rows_and_csv_include_review_states_and_chinese():
     assert "missing_reference" in exported.decode("utf-8-sig")
 
 
+def test_whole_paper_result_table_keeps_ab_fields_empty_until_judged():
+    document, outcome = _example()
+    bundle = build_handoff_bundle(document, outcome)
+    rows = whole_paper_result_rows(bundle)
+    assert len(rows) == 3
+    assert rows[0]["ref ID（系統）"] == "ref_n_1"
+    assert rows[0]["原文編號"] == "1"
+    assert rows[0]["方法 A 支持分數"] == ""
+    assert rows[0]["方法 B 支持分數"] == ""
+    assert rows[0]["方法 A 支持分類（暫定）"] == ""
+    assert rows[0]["方法 B 支持分類（暫定）"] == ""
+    assert rows[0]["方法 A 判斷狀態"] == "尚未執行"
+    assert rows[1]["ref 配對狀態"] == "待人工核對"
+    exported = whole_paper_result_csv_bytes(bundle).decode("utf-8-sig")
+    assert "方法 A 支持分數" in exported
+    assert "方法 B 支持分數" in exported
+    assert "方法 A 支持分類（暫定）" in exported
+
+
 @pytest.mark.parametrize("change", [
     lambda pair: replace(pair, source_locations=()),
     lambda pair: replace(pair, document_id="other"),
@@ -91,8 +110,8 @@ def test_unparsed_pair_stays_out_of_source_lookup():
     assert not bundle.references
 
 
-@pytest.mark.parametrize("extension", ["pdf", "docx", "html", "xml", "md", "txt"])
-def test_six_input_formats_produce_valid_handoff(extension):
+@pytest.mark.parametrize("extension", ["pdf", "docx"])
+def test_two_input_formats_produce_valid_handoff(extension):
     if extension == "pdf":
         import pymupdf
         pdf = pymupdf.open()
@@ -110,13 +129,6 @@ def test_six_input_formats_produce_valid_handoff(extension):
         stream = BytesIO()
         docx.save(stream)
         data = stream.getvalue()
-    elif extension == "html":
-        data = b"<p>Claim [1].</p><h2>References</h2><p>[1] A. Author, Source.</p>"
-    elif extension == "xml":
-        data = (b"<article><body><p>Claim [1].</p></body><ref-list><title>References</title>"
-                b"<ref>[1] A. Author, Source.</ref></ref-list></article>")
-    else:
-        data = b"Claim [1].\n\nReferences\n[1] A. Author, Source."
     document = convert_document(data, "paper." + extension)
     bundle = build_handoff_bundle(document, extract_whole_paper(document))
     assert len(bundle.ready_pairs) == 1

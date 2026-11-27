@@ -2,23 +2,37 @@ from io import BytesIO
 from zipfile import ZipFile
 import pytest
 from src.document_conversion import (
-    ConversionError, conversion_capabilities, convert_document, convert_pasted_paper,
+    ConversionError, DocumentBlock, _order_pdf_page, _pdf_reference_label_first,
+    conversion_capabilities, convert_document, convert_pasted_paper,
 )
 from src.document_handoff import CitationHandoff, ReferenceCandidate
 from src.whole_paper import extract_whole_paper
 
 
-@pytest.mark.parametrize("extension,content", [
-    ("txt", "研究主張 [1]."), ("md", "# Study\n\nClaim [1]."),
-    ("html", "<h1>Study</h1><p>Claim [1].</p><script>bad()</script>"),
-    ("xml", '<article><title>Study</title><p>Claim <xref rid="r1">[1]</xref>.</p><ref id="r1">Source</ref></article>'),
-])
-def test_text_formats(extension, content):
-    result = convert_document(content.encode(), f"paper.{extension}")
-    assert "[1]" in result.markdown
-    assert result.blocks[0].locator
-    assert "bad()" not in result.markdown
-    assert result.document_id == convert_document(content.encode(), f"other.{extension}").document_id
+@pytest.mark.parametrize("extension", ["html", "xml", "md", "txt", "doc"])
+def test_retired_upload_formats_are_rejected(extension):
+    with pytest.raises(ConversionError) as error:
+        convert_document(b"Claim [1].", f"paper.{extension}")
+    assert error.value.code == "UNSUPPORTED_FORMAT"
+
+
+def test_pdf_margin_label_emitted_last_is_moved_before_its_reference_text():
+    text = "Source author, Title.\n[29]"
+    detail = {"lines": [
+        {"bbox": (331, 386, 560, 394)},
+        {"bbox": (314, 386.2, 327, 394.2)},
+    ]}
+    assert _pdf_reference_label_first(text, detail) == "[29]\nSource author, Title."
+
+
+def test_pdf_near_equal_baselines_put_left_reference_label_first():
+    content = DocumentBlock("body", "Source author, Title.", "page:1/block:1", 1,
+                            (331, 54.0, 560, 72))
+    label = DocumentBlock("label", "[67]", "page:1/block:2", 1,
+                          (314, 54.2, 327, 62))
+    assert [block.markdown for block in _order_pdf_page([content, label], 600)] == [
+        "[67]", "Source author, Title.",
+    ]
 
 
 def test_docx_order_and_table():
@@ -83,13 +97,10 @@ def test_docx_superscript_and_note_parts_keep_markers_and_locations():
     assert pairs[3].reference.source_locations[0].locator == "word:endnote:3"
 
 
-def test_pasted_full_paper_uses_same_markdown_conversion_as_upload():
+def test_internal_text_fixture_supports_parser_tests():
     text = "# Study\n\nClaim (Wang, 2024).\n\n## References\nWang (2024). Source."
     pasted = convert_pasted_paper(text)
-    uploaded = convert_document(text.encode("utf-8"), "study.md")
-    assert pasted.markdown == uploaded.markdown
-    assert pasted.document_id == uploaded.document_id
-    assert pasted.source_format == "md"
+    assert pasted.source_format == "internal_text"
     assert "## References" in pasted.markdown
 
 
@@ -121,7 +132,31 @@ def test_pdf_two_column_text_is_present_with_position_warning():
     assert "Left column [1]" in result.markdown
     assert "Right column [2]" in result.markdown
     assert all(block.page == 1 and block.bbox for block in result.blocks)
-    assert any("多欄順序" in warning for warning in result.warnings)
+    assert any("雙欄閱讀順序" in warning for warning in result.warnings)
+
+
+def test_pdf_two_columns_read_top_to_bottom_with_running_header_removed():
+    import pymupdf
+    from src.document_conversion import DocumentBlock, _order_pdf_page
+
+    blocks = []
+    for index in range(3):
+        blocks.append(DocumentBlock(f"left-{index}", f"Left {index + 1}.", "page:1",
+                                    1, (72, 100 + 25 * index, 200, 115 + 25 * index)))
+        blocks.append(DocumentBlock(f"right-{index}", f"Right {index + 1}.", "page:1",
+                                    1, (340, 100 + 25 * index, 480, 115 + 25 * index)))
+    assert [block.markdown for block in _order_pdf_page(blocks, 612)] == [
+        "Left 1.", "Left 2.", "Left 3.", "Right 1.", "Right 2.", "Right 3."]
+
+    doc = pymupdf.open()
+    for page_number in (1, 2):
+        page = doc.new_page()
+        page.insert_text((72, 35), f"Page {page_number} of 2 Journal (2025)")
+        for index in range(3):
+            page.insert_text((72, 100 + 25 * index), f"Left {index + 1}.")
+            page.insert_text((340, 100 + 25 * index), f"Right {index + 1}.")
+    result = convert_document(doc.tobytes(), "columns.pdf")
+    assert "Journal (2025)" not in result.markdown
 
 
 def test_image_only_pdf_is_not_empty_success():
@@ -137,16 +172,16 @@ def test_image_only_pdf_is_not_empty_success():
 
 
 def test_supported_formats_exclude_legacy_doc():
-    assert conversion_capabilities()["extensions"] == ["pdf", "docx", "html", "xml", "md", "txt"]
+    assert conversion_capabilities()["extensions"] == ["pdf", "docx"]
     with pytest.raises(ConversionError) as error:
         convert_document(b"legacy Word file", "paper.doc")
     assert error.value.code == "UNSUPPORTED_FORMAT"
 
 
 @pytest.mark.parametrize("name,data,code", [
-    ("a.txt", b"", "EMPTY_FILE"), ("a.exe", b"x", "UNSUPPORTED_FORMAT"),
+    ("a.pdf", b"", "EMPTY_FILE"), ("a.exe", b"x", "UNSUPPORTED_FORMAT"),
     ("a.pdf", b"invalid", "CONVERSION_FAILED"),
-    ("a.xml", b'<!DOCTYPE x [<!ENTITY e "oops">]><x>&e;</x>', "CONVERSION_FAILED"),
+    ("a.xml", b'<!DOCTYPE x [<!ENTITY e "oops">]><x>&e;</x>', "UNSUPPORTED_FORMAT"),
 ])
 def test_invalid_inputs(name, data, code):
     with pytest.raises(ConversionError) as error:

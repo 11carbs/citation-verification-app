@@ -9,13 +9,29 @@ from pathlib import Path
 import re
 from zipfile import ZipFile
 
-SUPPORTED_EXTENSIONS = ("pdf", "docx", "html", "xml", "md", "txt")
+SUPPORTED_EXTENSIONS = ("pdf", "docx")
 MAX_BYTES = 30 * 1024 * 1024
 _WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
 
 def _word_tag(name: str) -> str:
     return f"{{{_WORD_NS}}}{name}"
+
+
+def _pdf_reference_label_first(text: str, detail: dict) -> str:
+    """Fix PDF text blocks whose left-hand reference label is emitted last."""
+    lines = text.splitlines()
+    if len(lines) < 2 or not re.fullmatch(r"\[\d{1,3}\]", lines[-1].strip()):
+        return text
+    detailed_lines = detail.get("lines", [])
+    if len(detailed_lines) != len(lines):
+        return text
+    label = detailed_lines[-1]
+    first = detailed_lines[0]
+    if (label["bbox"][0] < first["bbox"][0]
+            and abs(label["bbox"][1] - first["bbox"][1]) < 3):
+        return lines[-1].strip() + "\n" + "\n".join(lines[:-1])
+    return text
 
 
 def _docx_paragraph_text(paragraph) -> str:
@@ -100,21 +116,47 @@ def conversion_capabilities() -> dict:
             "ocr_available": False}
 
 
-def _decode(data: bytes) -> str:
-    # BOM first; do not silently replace unreadable citation characters.
-    encodings = ("utf-16",) if data.startswith((b"\xff\xfe", b"\xfe\xff")) else ("utf-8-sig", "cp950")
-    for encoding in encodings:
-        try:
-            return data.decode(encoding)
-        except UnicodeError:
-            pass
-    raise ConversionError("TEXT_ENCODING", "文字編碼無法辨識，請另存 UTF-8。")
-
-
 def convert_pasted_paper(text: str) -> ConvertedDocument:
-    """Treat a pasted full paper as Markdown text through the common converter."""
-    data = text.encode("utf-8") if text.strip() else b""
-    return convert_document(data, "pasted-paper.md")
+    """Create an internal text fixture for parser tests, not a user upload path."""
+    if not text.strip():
+        raise ConversionError("EMPTY_FILE", "內容是空的。")
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    data = normalized.encode("utf-8")
+    block = DocumentBlock("block_0001", normalized.strip(), "text:document")
+    markdown = f"<!-- {block.block_id} -->\n{block.markdown}"
+    return ConvertedDocument("doc_" + sha256(data).hexdigest()[:16],
+                             "internal-text-fixture", "internal_text", markdown,
+                             (block,), (), "internal-test-text-v1")
+
+
+def _order_pdf_page(blocks: list[DocumentBlock], page_width: float) -> list[DocumentBlock]:
+    """Read two substantial text columns vertically before crossing the gutter."""
+    def by_reading_line(items: list[DocumentBlock]) -> list[DocumentBlock]:
+        # PDF baselines often differ by a fraction of a point between a label
+        # in the margin and the reference text on the same visual line.
+        positioned = sorted(items, key=lambda item: (item.bbox[1], item.bbox[0]))
+        ordered: list[DocumentBlock] = []
+        group: list[DocumentBlock] = []
+        for item in positioned:
+            if group and item.bbox[1] - group[0].bbox[1] > 2:
+                ordered.extend(sorted(group, key=lambda member: member.bbox[0]))
+                group = []
+            group.append(item)
+        ordered.extend(sorted(group, key=lambda member: member.bbox[0]))
+        return ordered
+
+    middle = page_width / 2
+    left = [block for block in blocks if block.bbox and block.bbox[2] < middle + 15]
+    right = [block for block in blocks if block not in left and block.bbox
+             and block.bbox[0] > middle - 15]
+    if len(left) < 3 or len(right) < 3:
+        return by_reading_line(blocks)
+    first_y = min(block.bbox[1] for block in left + right)
+    leading = [block for block in blocks if block not in left + right and block.bbox
+               and block.bbox[3] <= first_y + 10]
+    trailing = [block for block in blocks if block not in left + right and block not in leading]
+    return by_reading_line(leading) + by_reading_line(left) + \
+        by_reading_line(right) + by_reading_line(trailing)
 
 
 def convert_document(data: bytes, filename: str) -> ConvertedDocument:
@@ -125,7 +167,7 @@ def convert_document(data: bytes, filename: str) -> ConvertedDocument:
     """
     extension = Path(filename).suffix.lower().lstrip(".")
     if extension not in SUPPORTED_EXTENSIONS:
-        raise ConversionError("UNSUPPORTED_FORMAT", "支援 PDF、DOCX、HTML、XML、MD、TXT。")
+        raise ConversionError("UNSUPPORTED_FORMAT", "僅支援 PDF、DOCX。")
     if not data:
         raise ConversionError("EMPTY_FILE", "檔案是空的。")
     if len(data) > MAX_BYTES:
@@ -176,16 +218,33 @@ def convert_document(data: bytes, filename: str) -> ConvertedDocument:
                                 break
                     for block in text_blocks:
                         if block[6] == 0 and block[5] not in skip_numbers:
-                            text = block[4].strip()
+                            text = _pdf_reference_label_first(
+                                block[4].strip(), detailed.get(block[5], {}),
+                            )
                             box = tuple(block[:4])
                             for raised_text, raised_box in superscripts.get(block[5], []):
                                 text += "^{" + raised_text + "}"
                                 box = (min(box[0], raised_box[0]), min(box[1], raised_box[1]),
                                        max(box[2], raised_box[2]), max(box[3], raised_box[3]))
                             add(text, f"page:{page_number}/block:{block[5]}", page_number, box)
+                    blocks[before:] = _order_pdf_page(blocks[before:], page.rect.width)
                     if len(blocks) == before:
                         warnings.append(f"第 {page_number} 頁無可擷取文字，可能需要 OCR。")
-            warnings.append("PDF 採文字區塊抽取，僅合併明顯的數字上標；多欄順序、註腳、表格與公式需人工核對，未執行 OCR。")
+            # Repeated top-margin running heads are not author-year citations.
+            def header_key(text: str) -> str:
+                return " ".join(re.sub(r"\bpage\s+\d+\s+of\s+\d+\b", "", text,
+                                       flags=re.I).split()).casefold()
+
+            headers: dict[str, set[int]] = {}
+            for block in blocks:
+                if block.page and block.bbox and block.bbox[1] < 60:
+                    key = header_key(block.markdown)
+                    headers.setdefault(key, set()).add(block.page)
+            repeated = {key for key, pages in headers.items() if key and len(pages) >= 2}
+            blocks = [block for block in blocks if not (block.page and block.bbox
+                      and block.bbox[1] < 60 and any(
+                          header_key(block.markdown).startswith(key) for key in repeated))]
+            warnings.append("PDF 已擷取可選取的文字，並嘗試依雙欄閱讀順序排列。註腳、表格與公式可能漏掉或排錯，請人工核對；圖片掃描頁尚不能辨識文字。")
         elif extension == "docx":
             from docx import Document
             from docx.table import Table
@@ -210,100 +269,6 @@ def convert_document(data: bytes, filename: str) -> ConvertedDocument:
                 for note_id, note_text in _docx_notes(data, kind):
                     add(f"[^{kind}{note_id}]: {note_text}", f"word:{label}:{note_id}")
             warnings.append("DOCX 已讀取本文、表格及可用的註腳／尾註文字；頁首頁尾、文字方塊及複雜欄位需人工核對。")
-        elif extension == "html":
-            from bs4 import BeautifulSoup
-            from markdownify import markdownify
-            converter = "html-markdownify-v1"
-            soup = BeautifulSoup(_decode(data), "html.parser")
-            for node in soup(["script", "style", "iframe", "object"]):
-                node.decompose()
-            html_notes: dict[str, str] = {}
-            for sup in list(soup.find_all("sup")):
-                label = sup.get_text("", strip=True)
-                if not re.fullmatch(r"\d+(?:\s*[,;–-]\s*\d+)*", label):
-                    continue
-                link = sup.find("a", href=True)
-                if link is None and sup.parent.name == "a" and sup.parent.has_attr("href"):
-                    link = sup.parent
-                target_id = link["href"][1:] if link and link["href"].startswith("#") else ""
-                target = soup.find(id=target_id) if target_id else None
-                note_key = re.sub(r"[^A-Za-z0-9_-]", "", target_id)
-                is_note = bool(target and (
-                    target_id.lower().startswith(("fn", "en", "note"))
-                    or target.find_parent(class_=re.compile(r"footnotes|endnotes", re.I))
-                ))
-                if is_note and note_key:
-                    note_text = target.get_text(" ", strip=True)
-                    note_text = re.sub(r"^\s*\d+[.)]?\s*", "", note_text).strip()
-                    if note_text:
-                        html_notes[note_key] = note_text
-                        sup.replace_with(f"[^{note_key}]")
-                        target.decompose()
-                        continue
-                sup.replace_with("^{" + label + "}")
-            # Use a document-local Markdown block; do not invent PDF page numbers.
-            add(markdownify(str(soup), heading_style="ATX"), "html:document")
-            for note_key, note_text in html_notes.items():
-                add(f"[^{note_key}]: {note_text}", f"html:note:{note_key}")
-        elif extension == "xml":
-            from defusedxml import ElementTree
-            converter = "xml-structured-text-v1"
-            root = ElementTree.fromstring(data)
-            xml_notes: list[tuple[str, str, str]] = []
-
-            def inline_text(element):
-                if element.tag.rsplit("}", 1)[-1] == "xref":
-                    label = "".join(element.itertext()).strip()
-                    kind = element.attrib.get("ref-type", "").lower()
-                    target = element.attrib.get("rid", "")
-                    if kind in {"fn", "footnote", "endnote"} and target:
-                        return f"[^{target}]"
-                    if kind == "bibr":
-                        numeric_label = label.strip("[] .")
-                        if numeric_label.isdigit():
-                            return f"[{numeric_label}]"
-                        if target:
-                            return f"[@{target}]"
-                pieces = [element.text or ""]
-                for child in element:
-                    pieces.extend((inline_text(child), child.tail or ""))
-                return "".join(pieces)
-
-            def walk(element, locator):
-                tag = element.tag.rsplit("}", 1)[-1]
-                children = list(element)
-                if tag in {"fn", "endnote"}:
-                    note_id = element.attrib.get("id", "")
-                    if note_id:
-                        xml_notes.append((note_id, inline_text(element).strip(), locator))
-                    return
-                if tag in {"p", "title", "article-title", "ref", "mixed-citation", "element-citation"} or not children:
-                    text = inline_text(element).strip()
-                    if tag == "ref":
-                        label = next(("".join(child.itertext()).strip(" .[]") for child in children
-                                      if child.tag.rsplit("}", 1)[-1] == "label"), "")
-                        if label.isdigit():
-                            text = "[" + label + "] " + re.sub(r"^\s*" + re.escape(label) + r"[.)]?\s*", "", text)
-                        elif element.attrib.get("id") and not re.match(r"^\s*\[\d+\]", text):
-                            text = "[@" + element.attrib["id"] + "] " + text
-                    add(("## " if tag in {"title", "article-title"} else "") + text, locator)
-                else:
-                    if element.text and element.text.strip():
-                        add(element.text, locator + "/text")
-                    for index, child in enumerate(children, 1):
-                        child_tag = child.tag.rsplit("}", 1)[-1]
-                        walk(child, f"{locator}/{child_tag}[{index}]")
-                        if child.tail and child.tail.strip():
-                            add(child.tail, f"{locator}/tail[{index}]")
-            walk(root, "/" + root.tag.rsplit("}", 1)[-1])
-            for note_id, note_text, locator in xml_notes:
-                if note_text:
-                    add(f"[^{note_id}]: {note_text}", locator)
-            warnings.append("XML 本版保留文字與元素路徑；僅處理常見 JATS xref/ref/註腳結構，其他 schema 需核對。")
-        else:
-            converter = "markdown-pass-through-v1" if extension == "md" else "plain-text-v1"
-            text = _decode(data).replace("\r\n", "\n").replace("\r", "\n")
-            add(text, "text:document")
     except ConversionError:
         raise
     except Exception as error:
