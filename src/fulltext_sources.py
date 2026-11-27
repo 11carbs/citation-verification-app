@@ -1,4 +1,4 @@
-"""第二人：被引文獻的開放存取全文取得與轉 Markdown（汪老師 11/24 第 2 點）。
+"""第二人：被引文獻的開放存取全文取得與轉 Markdown。
 
 取全文分三條路，依被引文獻的識別碼決定走哪一條：
 
@@ -19,6 +19,7 @@
 - ``CONVERT_FAILED``：檔案拿到了但轉不出文字
 - ``NO_CONVERTER``：本機沒裝對應的轉檔工具，**不是文獻的問題**
 - ``INTERNAL_ERROR``：我們自己的程式出錯，不可以和限流、連線失敗算在同一桶
+- ``TOO_SHORT``：轉出來的內容短到不像全文（擋爬蟲頁、同意書頁），不可以當成拿到全文
 
 拿不到全文時由呼叫端退回查摘要（``reference_lookup``），兩邊都沒有才標「無法查核」。
 
@@ -60,6 +61,9 @@ HOST_MIN_INTERVAL = {"arxiv.org": 3.1, "export.arxiv.org": 3.1}
 DEFAULT_RETRY_AFTER = 8.0
 MAX_TRACE_RECORDS = 500
 DEFAULT_CACHE_FOLDER = Path(".cache/fulltext")
+# 轉出來比這還短就不是全文，是擋爬蟲頁、同意書頁或 JS 版面殼。
+# 這種東西長得像成功，但送去比對只會得到「找不到相關段落」，而且來源欄會寫「拿到全文」。
+MIN_FULL_TEXT_CHARS = 1000
 # 用篇名查 OpenAlex 時，回來的篇名要像到這個程度才算同一篇。與 reference_lookup 同一個門檻，
 # 兩條路（摘要、全文）的證據標準必須一致，否則 Jev 和一般 LLM 拿到的東西會不一樣。
 _PMCID = re.compile(r"\bPMC\d+\b", re.IGNORECASE)
@@ -75,6 +79,7 @@ class FullTextStatus(StrEnum):
     NO_CONVERTER = "缺少轉檔工具"
     NO_IDENTIFIER = "書目沒有可查的識別碼或篇名"
     INTERNAL_ERROR = "程式內部錯誤"
+    TOO_SHORT = "轉出來的內容不像全文"
     PENDING = "待查詢"
 
 
@@ -543,13 +548,14 @@ class FullTextFetcher:
         if suffix in (".md", ".markdown", ".txt"):
             text = data.decode("utf-8", errors="replace").strip()
             return _converted(text, "manual_upload", str(path), "passthrough",
-                              "手動上傳，原檔已是純文字")
+                              "手動上傳，原檔已是純文字", min_chars=0)
         if suffix in (".xml", ".nxml", ".jats"):
             return _converted(jats_to_markdown(data.decode("utf-8", errors="replace")),
-                              "manual_upload", str(path), "jats", "手動上傳 JATS XML")
+                              "manual_upload", str(path), "jats", "手動上傳 JATS XML", min_chars=0)
         if suffix in (".html", ".htm"):
             markdown, converter = html_to_markdown(data.decode("utf-8", errors="replace"))
-            return _converted(markdown, "manual_upload", str(path), converter, "手動上傳 HTML")
+            return _converted(markdown, "manual_upload", str(path), converter, "手動上傳 HTML",
+                              min_chars=0)
         if suffix == ".pdf":
             run = _Run()
             return _with_note(self._from_pdf(data, "manual_upload", str(path), run), run)
@@ -637,8 +643,13 @@ class FullTextFetcher:
                                     source="europe_pmc_xml", url=url, converter="jats")
             run.keep(result)
             return result
+        result = _converted(markdown, "europe_pmc_xml", url, "jats", "")
+        if result.status is FullTextStatus.TOO_SHORT:
+            run.note(f"Europe PMC 的 XML {result.note}")
+            run.keep(result)
+            return result
         run.note("用 Europe PMC 的 JATS XML 取得全文")
-        return _converted(markdown, "europe_pmc_xml", url, "jats", "")
+        return result
 
     def _from_pdf_url(self, url: str, run: _Run, *, source: str = "oa_pdf") -> FullTextResult:
         download = self.downloader.get(url, accept="application/pdf")
@@ -672,7 +683,11 @@ class FullTextFetcher:
                                     converter=converter)
             run.keep(result)
             return result
-        return _converted(markdown, source, url, converter, "")
+        result = _converted(markdown, source, url, converter, "")
+        if result.status is FullTextStatus.TOO_SHORT:
+            run.note(f"{url}：{result.note}")
+            run.keep(result)
+        return result
 
     def _from_html_url(self, url: str, run: _Run) -> FullTextResult:
         download = self.downloader.get(url, accept="text/html")
@@ -696,7 +711,11 @@ class FullTextFetcher:
                                     url=url, converter=converter)
             run.keep(result)
             return result
-        return _converted(markdown, source, url, converter, "")
+        result = _converted(markdown, source, url, converter, "")
+        if result.status is FullTextStatus.TOO_SHORT:
+            run.note(f"{url}：{result.note}")
+            run.keep(result)
+        return result
 
     # ---- OpenAlex 路由 ----
     def _openalex_locations(self, meta: ReferenceMetadata, run: _Run) -> list[dict]:
@@ -794,11 +813,20 @@ def _clean_url(value: object) -> str:
     return value.strip() if isinstance(value, str) and value.strip().startswith("http") else ""
 
 
-def _converted(markdown: str, source: str, url: str, converter: str, note: str) -> FullTextResult:
-    if not markdown.strip():
+def _converted(markdown: str, source: str, url: str, converter: str, note: str,
+               *, min_chars: int = MIN_FULL_TEXT_CHARS) -> FullTextResult:
+    body = markdown.strip()
+    if not body:
         return FullTextResult(status=FullTextStatus.CONVERT_FAILED, source=source, url=url,
                               converter=converter, note=note)
-    return FullTextResult(status=FullTextStatus.GOT_FULL_TEXT, markdown=markdown.strip(),
+    if len(body) < min_chars:
+        # 擋爬蟲頁、同意書頁、JS 版面殼都會轉出幾十到幾百字。放行的話來源欄會寫
+        # 「拿到全文」，實際上判斷端拿到的是垃圾，看起來卻像有憑有據。
+        short = f"轉出來只有 {len(body)} 字，短到不像全文（門檻 {min_chars}）"
+        return FullTextResult(status=FullTextStatus.TOO_SHORT, markdown=body, source=source,
+                              url=url, converter=converter,
+                              note="；".join(part for part in (note, short) if part))
+    return FullTextResult(status=FullTextStatus.GOT_FULL_TEXT, markdown=body,
                           source=source, url=url, converter=converter, note=note)
 
 

@@ -97,7 +97,7 @@ class OpenRouterJevAdapter:
         self._timeout = timeout
         self._include_evidence_excerpt = include_evidence_excerpt
         self._resolve_abstract_title = resolve_abstract_title
-        # 11/17 的舊做法：拿不到摘要就用篇名評分。汪老師 11/10 會後補充第 4 點否決了它
+        # 11/17 的舊做法：拿不到摘要就用篇名評分。後來的規則否決了它
         # （系統沒有人工補查，只記錄該項目無法查核），所以預設關閉。
         # 要還原舊行為，建 adapter 時傳 title_only_scoring=True。
         self._title_only_scoring = title_only_scoring
@@ -141,7 +141,7 @@ class OpenRouterJevAdapter:
         if lookup_failed or reference.source_status is SourceStatus.NOT_FOUND:
             abstract = ""
         if not abstract and not self._title_only_scoring:
-            # 沒有內容證據就不送 Q2，也不給分數（汪老師 11/10 第 4 點）。
+            # 沒有內容證據就不送 Q2，也不給分數。
             # 為什麼拿不到（查不到文獻／有文獻但沒摘要／查詢失敗）不在這裡收斂，
             # 由 reference.source_status 與 error_message 各自保留，不可混成一句。
             return replace(

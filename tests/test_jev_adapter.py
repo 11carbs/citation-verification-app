@@ -35,7 +35,7 @@ TITLE = ReferenceLookupResult(1, "A study of treatment time")
 def title_only_adapter() -> OpenRouterJevAdapter:
     """11/17 的舊規則：拿不到摘要時改用篇名評分。
 
-    汪老師 11/10 會後補充第 4 點把它改成「標無法查核、不給分數」，所以程式預設已經
+    後來改成「標無法查核、不給分數」，所以程式預設已經
     不這樣做。下面這些測試守的是**舊規則本身**（分數裁切、Q1 失敗後續跑、限流不外洩
     回應內容等），拿掉它們等於少掉這些保護，所以保留測試、明確開旗標。
     """
@@ -536,7 +536,7 @@ def test_streamlit_connects_jev_to_real_lookup_adapter_with_stubbed_http(
     assert "使用 Jev" in app.info[0].value
 
 
-# --- 汪老師 11/10 會後補充第 4 點：拿不到內容證據就標「無法查核」、不給分數 ---
+# --- 拿不到內容證據就標「無法查核」、不給分數 ---
 # 系統沒有人工補查，所以這裡的責任是**誠實回報查不到**，不是猜一個分數。
 # 下面每一條都在守「無法查核不可以被混成別的東西」。
 
