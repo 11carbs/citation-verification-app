@@ -54,7 +54,12 @@ def run_method_a_pipeline(
             support_score=judgment.support_score,
             evidence_basis=judgment.evidence_basis,
             source_status=source_status,
-            band_override=SupportBand.UNSUPPORTED if stopped else None,
+            band_override=(
+                SupportBand.UNSUPPORTED if stopped
+                else SupportBand.UNVERIFIABLE
+                if judgment.status is JudgmentStatus.UNVERIFIABLE
+                else None
+            ),
         )
         rows.append(
             AnalysisRow(
@@ -91,7 +96,16 @@ def _judge_pair(
             error_message=f"無法讀取本筆書目資料（{type(error).__name__}）。",
         )
     if reference_adapter is None:
-        return reference, jev_adapter.judge(pair, reference)
+        judgment = jev_adapter.judge(pair, reference)
+        if judgment.status is JudgmentStatus.UNVERIFIABLE and not judgment.error_message:
+            # 這一輪根本沒接摘要查詢（離線批次、單元測試）。不寫清楚的話，
+            # 輸出會是「無法查核 ＋ 來源狀態待查詢 ＋ 原因全空」，
+            # 看的人分不出是查過查不到、還是沒查。
+            judgment = replace(
+                judgment,
+                error_message="本次未接上摘要查詢，沒有可用的內容證據。",
+            )
+        return reference, judgment
 
     def lookup_abstract() -> ReferenceLookupResult:
         nonlocal reference

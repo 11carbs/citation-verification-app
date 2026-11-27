@@ -46,6 +46,7 @@ class SupportBand(StrEnum):
     SUPPORTED = "支持"
     UNCERTAIN = "不確定"
     UNSUPPORTED = "不支持"
+    UNVERIFIABLE = "無法查核"
 
 
 class ReferenceMatchStatus(StrEnum):
@@ -203,6 +204,8 @@ class AnalysisRow:
         result = self.method_a
         if result is None or result.band is None:
             return ""
+        if result.band is SupportBand.UNVERIFIABLE:
+            return "拿不到被引文獻的內容，未給分數"
         if result.source_status is SourceStatus.SKIPPED:
             return "篇名不相關，未進行 Q2 證據判斷"
         if result.evidence_basis is EvidenceBasis.TITLE:

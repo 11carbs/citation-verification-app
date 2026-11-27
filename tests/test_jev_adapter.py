@@ -32,6 +32,16 @@ PAIR = CitationPair(
 TITLE = ReferenceLookupResult(1, "A study of treatment time")
 
 
+def title_only_adapter() -> OpenRouterJevAdapter:
+    """11/17 的舊規則：拿不到摘要時改用篇名評分。
+
+    汪老師 11/10 會後補充第 4 點把它改成「標無法查核、不給分數」，所以程式預設已經
+    不這樣做。下面這些測試守的是**舊規則本身**（分數裁切、Q1 失敗後續跑、限流不外洩
+    回應內容等），拿掉它們等於少掉這些保護，所以保留測試、明確開旗標。
+    """
+    return OpenRouterJevAdapter("test-placeholder", title_only_scoring=True)
+
+
 def title_answer(choice: str) -> dict:
     probabilities = dict.fromkeys(("related", "uncertain", "unrelated"), 0.1)
     probabilities[choice] = 0.8
@@ -144,7 +154,7 @@ def test_shared_claim_coverage_uses_evidence_instead_of_reference_order(
     reference_adapter = Mock()
     reference_adapter.lookup.side_effect = lookup
     pairs = build_citation_pairs(source_sentence, refs)
-    rows = run_method_a_pipeline(pairs, reference_adapter, OpenRouterJevAdapter("test-placeholder"))
+    rows = run_method_a_pipeline(pairs, reference_adapter, title_only_adapter())
 
     assert len(rows) == 4
     assert [state["claim"] for state in stub.states if "title" in state] == list(subclaims) * 2
@@ -217,7 +227,7 @@ def test_abstract_lookup_runs_between_q1_and_q2(
 
     reference_adapter.lookup.side_effect = lookup
     [row] = run_method_a_pipeline(
-        [PAIR], reference_adapter, OpenRouterJevAdapter("test-placeholder"),
+        [PAIR], reference_adapter, title_only_adapter(),
         prepare_reference=lambda pair: TITLE,
     )
     assert stub.events == ["title_relevance", "lookup", "citation_support"]
@@ -263,7 +273,7 @@ def test_abstract_lookup_runs_between_q1_and_q2(
 )
 def test_clip_and_classify_q2_without_rounding(monkeypatch, raw, score, band):
     DecisionsStub(monkeypatch, title_answer("related"), {"type": "noul", "noul": raw})
-    [row] = run_method_a_pipeline([PAIR], None, OpenRouterJevAdapter("test-placeholder"))
+    [row] = run_method_a_pipeline([PAIR], None, title_only_adapter())
     assert row.method_a.support_score == score
     assert row.method_a.band is band
 
@@ -271,7 +281,7 @@ def test_clip_and_classify_q2_without_rounding(monkeypatch, raw, score, band):
 @pytest.mark.parametrize("bad_score", [-0.01, 1.01, True, "0.7", None])
 def test_invalid_q2_preserves_title_result_and_produces_no_grade(monkeypatch, bad_score):
     DecisionsStub(monkeypatch, title_answer("related"), {"type": "noul", "noul": bad_score})
-    [row] = run_method_a_pipeline([PAIR], None, OpenRouterJevAdapter("test-placeholder"))
+    [row] = run_method_a_pipeline([PAIR], None, title_only_adapter())
     assert row.judgment.status is JudgmentStatus.SUPPORT_ERROR
     assert row.judgment.confidence == 0.6
     assert row.method_a.support_score is None
@@ -284,7 +294,7 @@ def test_failed_q1_preserves_row_and_continues_batch(monkeypatch, failure):
         monkeypatch, failure, title_answer("related"), {"type": "noul", "noul": 0.71},
     )
     broken, passed = run_method_a_pipeline(
-        [PAIR, PAIR], None, OpenRouterJevAdapter("test-placeholder"),
+        [PAIR, PAIR], None, title_only_adapter(),
     )
     assert stub.events == ["title_relevance", "title_relevance", "citation_support"]
     assert broken.judgment.status is JudgmentStatus.TITLE_ERROR
@@ -321,7 +331,7 @@ def test_bad_teammate_lookup_uses_only_original_title(monkeypatch, failed_lookup
         adapter.lookup.side_effect = failed_lookup
     else:
         adapter.lookup.return_value = failed_lookup
-    [row] = run_method_a_pipeline([PAIR], adapter, OpenRouterJevAdapter("test-placeholder"))
+    [row] = run_method_a_pipeline([PAIR], adapter, title_only_adapter())
     assert row.method_a.band is SupportBand.UNCERTAIN
     assert row.method_a.source_status is SourceStatus.LOOKUP_FAILED
     assert stub.events == ["title_relevance", "citation_support"]
@@ -338,7 +348,7 @@ def test_bad_metadata_isolated_to_one_pair(monkeypatch):
     stub = DecisionsStub(monkeypatch, title_answer("related"), {"type": "noul", "noul": 0.71})
     prepare = Mock(side_effect=[KeyError("private detail"), TITLE])
     broken, passed = run_method_a_pipeline(
-        [PAIR, PAIR], None, OpenRouterJevAdapter("test-placeholder"), prepare_reference=prepare,
+        [PAIR, PAIR], None, title_only_adapter(), prepare_reference=prepare,
     )
     assert stub.events == ["title_relevance", "citation_support"]
     assert broken.judgment.status is JudgmentStatus.REFERENCE_ERROR
@@ -366,7 +376,7 @@ def test_meeting_example_runs_with_the_teammate_lookup_interface(monkeypatch):
     adapter = Mock()
     adapter.lookup.side_effect = lookup
     pairs = build_citation_pairs(MOCK_CLAIM, MOCK_REFERENCES)
-    rows = run_method_a_pipeline(pairs, adapter, OpenRouterJevAdapter("test-placeholder"))
+    rows = run_method_a_pipeline(pairs, adapter, title_only_adapter())
     assert stub.events == [
         "title_relevance",
         "title_relevance", "lookup:107", "citation_support",
@@ -385,7 +395,7 @@ def test_rate_limit_after_q1_preserves_title_and_hides_response_body(monkeypatch
     response_body = BytesIO(b"private upstream error details")
     failure = HTTPError(DECISIONS_URL, 429, "Too Many Requests", None, response_body)
     DecisionsStub(monkeypatch, title_answer("related"), failure)
-    [row] = run_method_a_pipeline([PAIR], None, OpenRouterJevAdapter("test-placeholder"))
+    [row] = run_method_a_pipeline([PAIR], None, title_only_adapter())
     assert row.judgment.status is JudgmentStatus.SUPPORT_ERROR
     assert row.judgment.title_choice == "相關"
     assert row.method_a.band is None
@@ -428,8 +438,8 @@ def test_missing_key_preserves_pairing_and_uses_no_network(monkeypatch):
          ["title_relevance", "semantic_scholar", "citation_support", "evidence_excerpt"]),
         ("uncertain", "openalex", "拿到摘要", "摘要", "不確定",
          ["title_relevance", "semantic_scholar", "openalex", "citation_support", "evidence_excerpt"]),
-        ("uncertain", "", "查不到", "篇名", "不確定",
-         ["title_relevance", "semantic_scholar", "openalex", "citation_support"]),
+        ("uncertain", "", "查不到", "無可用證據", "無法查核",
+         ["title_relevance", "semantic_scholar", "openalex"]),
         ("unrelated", "", "Q1 停止未查詢", "篇名", "不支持", ["title_relevance"]),
     ],
 )
@@ -489,7 +499,9 @@ def test_streamlit_connects_jev_to_real_lookup_adapter_with_stubbed_http(
     assert stub.events == sequence
     [record] = app.dataframe[0].value.to_dict("records")
     [row] = app.session_state["analysis_rows"]
-    assert row.method_a.support_score == (None if choice == "unrelated" else 0.40)
+    # 不給分數有兩種：Q1 判篇名不相關就停（不支持），以及查不到內容證據（無法查核）。
+    # 兩者的 band 不同，不可以只看分數是不是 None 就當成同一件事。
+    assert row.method_a.support_score == (None if band in ("不支持", "無法查核") else 0.40)
     assert row.reference.abstract_source == provider
     assert record["方法 A 證據層級"] == band
     assert record["方法 A 判斷依據"] == basis
@@ -499,7 +511,8 @@ def test_streamlit_connects_jev_to_real_lookup_adapter_with_stubbed_http(
         "openalex": "OpenAlex",
         "": "",
     }[provider]
-    if choice != "unrelated":
+    # 無法查核那一筆根本沒送 Q2，stub.states 只有篇名那一次，不能照舊索引 [1]
+    if "citation_support" in sequence:
         expected_evidence = {
             "semantic_scholar": scholar_abstract,
             "openalex": openalex_abstract,
@@ -521,3 +534,236 @@ def test_streamlit_connects_jev_to_real_lookup_adapter_with_stubbed_http(
     assert stub.events == sequence
     assert len(b_requests) == 1
     assert "使用 Jev" in app.info[0].value
+
+
+# --- 汪老師 11/10 會後補充第 4 點：拿不到內容證據就標「無法查核」、不給分數 ---
+# 系統沒有人工補查，所以這裡的責任是**誠實回報查不到**，不是猜一個分數。
+# 下面每一條都在守「無法查核不可以被混成別的東西」。
+
+
+@pytest.mark.parametrize(
+    ("source_status", "shown_status", "error_message"),
+    [
+        (SourceStatus.NO_ABSTRACT, "有文獻但沒摘要", ""),
+        (SourceStatus.NOT_FOUND, "查不到", "摘要查詢未找到可確認的文獻。"),
+        (SourceStatus.LOOKUP_FAILED, "查詢失敗", "查詢未完成"),
+    ],
+)
+def test_no_abstract_is_unverifiable_and_keeps_its_own_reason(
+    monkeypatch, source_status, shown_status, error_message,
+):
+    """三種拿不到摘要的原因都標無法查核，但原因各自保留，不可併成一句。"""
+    stub = DecisionsStub(monkeypatch, title_answer("related"))
+    reference_adapter = Mock()
+    reference_adapter.lookup.side_effect = lambda pair: ReferenceLookupResult(
+        1, TITLE.title, source_status=source_status, error_message=error_message,
+    )
+
+    [row] = run_method_a_pipeline(
+        [PAIR], reference_adapter, OpenRouterJevAdapter("test-placeholder"),
+    )
+
+    assert stub.events == ["title_relevance"], "沒有證據就不該再花一次 Q2 的錢"
+    assert row.method_a.support_score is None
+    assert row.method_a.band is SupportBand.UNVERIFIABLE
+    assert row.judgment.status is JudgmentStatus.UNVERIFIABLE
+    record = row.to_record()
+    assert record["方法 A 證據層級"] == "無法查核"
+    assert record["方法 A 判斷依據"] == "無可用證據"
+    assert record["方法 A 支持分數"] is None
+    assert record["來源狀態"] == shown_status
+    assert record["錯誤狀態"] == error_message, "空字串也要真的空，不可以用 in 混過去"
+    assert record["方法 A 證據解讀"] == "拿不到被引文獻的內容，未給分數"
+
+
+def test_unverifiable_is_not_the_same_as_unsupported(monkeypatch):
+    """Q1 判篇名不相關＝不支持；查不到內容＝無法查核。兩者都沒有分數，但不是同一件事。"""
+    DecisionsStub(monkeypatch, title_answer("unrelated"), title_answer("related"))
+    reference_adapter = Mock()
+    reference_adapter.lookup.side_effect = lambda pair: ReferenceLookupResult(
+        1, TITLE.title, source_status=SourceStatus.NOT_FOUND,
+    )
+
+    [unrelated] = run_method_a_pipeline([PAIR], reference_adapter, OpenRouterJevAdapter("test-placeholder"))
+    [no_evidence] = run_method_a_pipeline([PAIR], reference_adapter, OpenRouterJevAdapter("test-placeholder"))
+
+    assert unrelated.method_a.support_score is no_evidence.method_a.support_score is None
+    assert unrelated.method_a.band is SupportBand.UNSUPPORTED
+    assert no_evidence.method_a.band is SupportBand.UNVERIFIABLE
+
+
+def test_an_abstract_is_still_scored(monkeypatch):
+    """有證據就照常評分：這條守的是新規則沒有把正常路徑一起關掉。"""
+    stub = DecisionsStub(monkeypatch, title_answer("related"), {"type": "noul", "noul": 0.82})
+    reference_adapter = Mock()
+    reference_adapter.lookup.side_effect = lambda pair: ReferenceLookupResult(
+        1, TITLE.title, abstract="The study found shorter treatment times.",
+        source_status=SourceStatus.GOT_ABSTRACT, abstract_source="semantic_scholar",
+    )
+
+    [row] = run_method_a_pipeline([PAIR], reference_adapter, OpenRouterJevAdapter("test-placeholder"))
+
+    assert stub.events == ["title_relevance", "citation_support"]
+    assert row.method_a.band is SupportBand.SUPPORTED
+    assert row.method_a.support_score == 0.82
+
+
+def test_title_only_scoring_restores_the_november_17_rule(monkeypatch):
+    """舊行為沒有被刪掉，傳旗標就回得去（組員若要對照 11/17 的數字會用到）。"""
+    stub = DecisionsStub(monkeypatch, title_answer("related"), {"type": "noul", "noul": 0.55})
+    reference_adapter = Mock()
+    reference_adapter.lookup.side_effect = lambda pair: ReferenceLookupResult(
+        1, TITLE.title, source_status=SourceStatus.NO_ABSTRACT,
+    )
+
+    [row] = run_method_a_pipeline([PAIR], reference_adapter, title_only_adapter())
+
+    assert stub.events == ["title_relevance", "citation_support"]
+    assert stub.states[1]["evidence_type"] == "篇名"
+    assert row.method_a.band is SupportBand.UNCERTAIN
+    assert row.method_a.support_score == 0.55
+
+
+def test_unverifiable_does_not_count_as_still_pending(monkeypatch):
+    """無法查核是查完了，不是還沒查。算進待查數會讓共引涵蓋永遠補不滿。"""
+    source_sentence = "BERT and SciBERT are pretrained language models [1], [2]."
+    refs = "\n".join(
+        f'[{index}] A. Author, "{paper}," 2019.'
+        for index, paper in enumerate(("BERT", "SciBERT"), 1)
+    )
+    DecisionsStub(monkeypatch, *[title_answer("related")] * 4)
+    reference_adapter = Mock()
+    reference_adapter.lookup.side_effect = lambda pair: ReferenceLookupResult(
+        pair.ref_number, f"Paper {pair.ref_number}", source_status=SourceStatus.NOT_FOUND,
+    )
+
+    rows = run_method_a_pipeline(
+        build_citation_pairs(source_sentence, refs), reference_adapter,
+        OpenRouterJevAdapter("test-placeholder"),
+    )
+
+    assert all(row.method_a.band is SupportBand.UNVERIFIABLE for row in rows)
+    [coverage] = summarize_shared_claims(rows)
+    assert (coverage.total, coverage.supported, coverage.pending) == (2, 0, 0)
+
+
+def test_the_unverifiable_band_has_its_own_colour():
+    """四個層級都要看得出差別，無法查核不能跟「還沒跑出來的空白」同色。"""
+    from src.presentation import support_band_style
+
+    styles = {band: support_band_style(band.value) for band in SupportBand}
+    assert all(styles.values()), "每個層級都要有顏色"
+    assert len(set(styles.values())) == len(SupportBand), "四個層級的顏色不可重複"
+    assert support_band_style("") == ""
+
+
+# --- 審查後補的洞：旗標關閉（正式行為）下這幾件事原本沒有任何測試守著 ---
+
+
+def test_a_group_with_one_unreachable_source_is_not_reported_as_finished(monkeypatch):
+    """部分抓到、部分抓不到時，拿不到的那項不可以從共引摘要裡消失。
+
+    原本「無法查核」既不算 supported 也不算 pending，畫面會印「待查 0 項」，
+    讀起來像查完了，其實是第二篇候選文獻根本沒抓到（429／逾時，重跑可能有結果）。
+    """
+    stub = DecisionsStub(
+        monkeypatch,
+        title_answer("related"), {"type": "noul", "noul": 0.90},
+        title_answer("related"), {"type": "noul", "noul": 0.20},
+        title_answer("related"),
+        title_answer("related"),
+    )
+    reference_adapter = Mock()
+
+    def lookup(pair):
+        if pair.ref_number == 1:
+            return ReferenceLookupResult(
+                1, "BERT", abstract="BERT is pretrained.", source_status=SourceStatus.GOT_ABSTRACT,
+            )
+        raise TimeoutError("429")
+
+    reference_adapter.lookup.side_effect = lookup
+    pairs = build_citation_pairs(
+        "BERT and SciBERT are pretrained language models [1], [2].",
+        '[1] A. Author, "BERT," 2019.\n[2] A. Author, "SciBERT," 2019.',
+    )
+
+    rows = run_method_a_pipeline(pairs, reference_adapter, OpenRouterJevAdapter("test-placeholder"))
+
+    assert [row.method_a.band for row in rows] == [
+        SupportBand.SUPPORTED, SupportBand.UNSUPPORTED,
+        SupportBand.UNVERIFIABLE, SupportBand.UNVERIFIABLE,
+    ]
+    [coverage] = summarize_shared_claims(rows)
+    assert (coverage.supported, coverage.pending, coverage.unverifiable) == (1, 0, 1)
+    assert coverage.supported + coverage.pending + coverage.unverifiable <= coverage.total
+    csv_data = dataframe_to_csv_bytes(build_output_dataframe(rows))
+    exported = list(csv.DictReader(StringIO(csv_data.decode("utf-8-sig"))))
+    assert {record["共引無法查核"] for record in exported} == {"1"}
+    assert stub.events.count("citation_support") == 2, "拿不到內容的那兩筆不該花錢送 Q2"
+
+
+def test_running_without_a_lookup_adapter_says_why_there_is_no_evidence(monkeypatch):
+    """沒接摘要查詢時，不可以留下「無法查核＋來源狀態待查詢＋原因全空」。"""
+    DecisionsStub(monkeypatch, title_answer("related"))
+
+    [row] = run_method_a_pipeline([PAIR], None, OpenRouterJevAdapter("test-placeholder"))
+
+    record = row.to_record()
+    assert record["方法 A 證據層級"] == "無法查核"
+    assert record["錯誤狀態"] == "本次未接上摘要查詢，沒有可用的內容證據。"
+
+
+def test_the_demo_table_marks_the_two_missing_references_unverifiable(monkeypatch):
+    """網站預設內容跑出來的樣子要固定住：報告時拿的就是這張表。
+
+    旗標關掉後 ref 109、110 從「不確定／不支持」變成「無法查核」，
+    示範表因此少了一個「低分」案例，報告時要講明這是規則改變不是程式壞掉。
+    """
+    stub = DecisionsStub(
+        monkeypatch,
+        title_answer("unrelated"),
+        title_answer("related"), {"type": "noul", "noul": 0.84},
+        title_answer("uncertain"),
+        title_answer("related"),
+    )
+
+    def lookup(pair):
+        stub.events.append(f"lookup:{pair.ref_number}")
+        if pair.ref_number == 107:
+            return ReferenceLookupResult(
+                107, "", abstract="An abstract about credentials.",
+                source_status=SourceStatus.GOT_ABSTRACT,
+            )
+        return ReferenceLookupResult(pair.ref_number, "", source_status=SourceStatus.NOT_FOUND)
+
+    reference_adapter = Mock()
+    reference_adapter.lookup.side_effect = lookup
+    pairs = build_citation_pairs(MOCK_CLAIM, MOCK_REFERENCES)
+
+    rows = run_method_a_pipeline(
+        pairs, reference_adapter, OpenRouterJevAdapter("test-placeholder"),
+    )
+
+    assert [row.method_a.band for row in rows] == [
+        SupportBand.UNSUPPORTED,      # Q1 判篇名不相關，沒查摘要就停
+        SupportBand.SUPPORTED,        # 有摘要，0.84
+        SupportBand.UNVERIFIABLE,     # 11/17 時是「不確定」
+        SupportBand.UNVERIFIABLE,     # 11/17 時是「不支持」
+    ]
+    assert stub.events == [
+        "title_relevance",
+        "title_relevance", "lookup:107", "citation_support",
+        "title_relevance", "lookup:109",
+        "title_relevance", "lookup:110",
+    ]
+
+
+def test_mock_mode_follows_the_same_rule(monkeypatch):
+    """展示模式不可以演出系統不會做的事。"""
+    from src.mock_adapters import MockJevAdapter
+
+    judgment = MockJevAdapter().judge(PAIR, ReferenceLookupResult(1, TITLE.title))
+
+    assert judgment.support_score is None
+    assert judgment.status is JudgmentStatus.UNVERIFIABLE

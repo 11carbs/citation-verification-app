@@ -190,8 +190,13 @@ if st.session_state.show_results:
                 st.write(
                     f"摘要支持 {group.supported}/{group.total} 項子主張"
                     f" · 待查 {group.pending} 項"
+                    f" · 無法查核 {group.unverifiable} 項"
                 )
-            st.caption("下表每列列出一篇候選文獻對一項子主張的判斷。涵蓋數以摘要支持為準。")
+            st.caption(
+                "下表每列列出一篇候選文獻對一項子主張的判斷。涵蓋數以摘要支持為準。"
+                "「無法查核」是候選文獻全都拿不到內容，不是比對後不支持；"
+                "原因看各列的「來源狀態」與「摘要查詢紀錄」。"
+            )
         st.markdown(
             "**證據層級：** "
             "<span style='background:#E8F5E9;color:#1B5E20;padding:3px 10px;"
@@ -199,7 +204,9 @@ if st.session_state.show_results:
             "<span style='background:#FFF3E0;color:#A65300;padding:3px 10px;"
             "border-radius:12px;font-weight:600'>不確定</span> "
             "<span style='background:#FDECEC;color:#B42318;padding:3px 10px;"
-            "border-radius:12px;font-weight:600'>不支持</span>",
+            "border-radius:12px;font-weight:600'>不支持</span> "
+            "<span style='background:#F2F4F7;color:#475467;padding:3px 10px;"
+            "border-radius:12px;font-weight:600'>無法查核</span>",
             unsafe_allow_html=True,
         )
         frame = build_output_dataframe(rows)
@@ -244,7 +251,11 @@ if st.session_state.show_results:
         )
         st.caption(
             "支持 ≥ 0.70 · 不確定 ≥ 0.40 且 < 0.70 · 不支持 < 0.40。"
-            "方法 A 篇名不相關時直接列為不支持。低分可能來自證據不足，判斷範圍見「方法 A 證據解讀」。"
+            "方法 A 篇名不相關時直接列為不支持。"
+            "拿不到被引文獻的內容時列為無法查核、不給分數，不是不支持；"
+            "拿不到的原因看「來源狀態」，細節在「錯誤狀態」或「摘要查詢紀錄」"
+            "（查到文獻但沒有摘要時，說明在「摘要查詢紀錄」）。"
+            "低分可能來自證據不足，判斷範圍見「方法 A 證據解讀」。"
         )
         st.download_button(
             "匯出 CSV",
