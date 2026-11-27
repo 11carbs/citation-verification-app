@@ -444,6 +444,24 @@ def test_narrative_author_year_followed_by_bracket_number_is_one_citation():
     assert result.pairs[0].reference.ref_id == "ref_n_8"
 
 
+def test_narrative_author_year_with_short_title_before_bracket_is_one_citation():
+    paper = ("The Jurgens et al. (2018) taxonomy [13] describes citation intent.\n\n"
+             "References\n[13] David Jurgens et al. Citation intent. 2018.")
+    result = extract_whole_paper(convert_pasted_paper(paper))
+    assert [pair.citation_marker for pair in result.pairs] == ["[13]"]
+
+
+def test_illustrative_quoted_author_year_is_not_a_citation():
+    paper = ('For example, “Smith et al. (2020) found that exercise reduces risk” '
+             'becomes “Exercise reduces risk”. A study (Robertson & Zaragoza, 2009) '
+             'reported a result.\n\nReferences\n[1] A different source.')
+    result = extract_whole_paper(convert_pasted_paper(paper))
+    assert [pair.citation_marker for pair in result.pairs] == [
+        "(Robertson & Zaragoza, 2009)",
+    ]
+    assert result.pairs[0].match_status == "missing_reference"
+
+
 def test_math_exponent_and_equation_number_are_not_citations():
     paper = ("The formula uses x^{2}, as in Eq. (1). A cited result.^{1}\n\n"
              "References\n[1] A. Author, Source.")

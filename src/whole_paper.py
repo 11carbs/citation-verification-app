@@ -117,6 +117,8 @@ _NARRATIVE = re.compile(
     r"\s*[（(](?P<year>(?:19|20)\d{2}[a-z]?)[）)]",
     re.I,
 )
+_QUOTED_EXAMPLE = re.compile(r'(?:“[^”]*”|"[^"]*"|‘[^’]*’)', re.S)
+_EXAMPLE_PREFIX = re.compile(r"(?:for example|e\.g\.|such as|like)\s*,?\s*$", re.I)
 _DOI = re.compile(r"\b10\.\d{4,9}/[^\s,;]+", re.I)
 _URL = re.compile(r"https?://[^\s<>]+", re.I)
 _LIKELY_AUTHOR_YEAR = re.compile(r"^[A-ZÀ-ÖØ-Þ][\w'’\-]+(?:\s+et\s+al\.)?\s+(?:19|20)\d{2}[a-z]?$", re.I)
@@ -497,13 +499,21 @@ def _mentions(segment: str, *, allow_parenthesized_numeric: bool = True) -> tupl
             continue
         if any(mention.number is not None and mention.marker.startswith("[")
                and mention.start >= match.end()
-               and not segment[match.end():mention.start].strip()
+               and re.fullmatch(r"[\w\s-]{0,40}", segment[match.end():mention.start])
+               and len(segment[match.end():mention.start].split()) <= 3
                for mention in found):
-            # "Wadden et al. (2020) [8]" names the author of [8]; it is
-            # one citation, not an author-year citation plus a second source.
+            # "Wadden et al. (2020) [8]" and "Jurgens et al. (2018)
+            # taxonomy [13]" each point to one numbered bibliography entry.
             continue
         add(_Mention(match.group(), start=match.start(), first_author=match["first"],
                      second_author=match["second"] or "", year=match["year"]))
+    illustrative_spans = [
+        (quote.start(), quote.end()) for quote in _QUOTED_EXAMPLE.finditer(segment)
+        if _EXAMPLE_PREFIX.search(segment[:quote.start()])
+    ]
+    found = [mention for mention in found if not any(
+        start <= mention.start < end for start, end in illustrative_spans
+    )]
     return sorted(found, key=lambda mention: mention.start), duplicates, invalid
 
 
