@@ -23,7 +23,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from src.adapters import ReferenceLookupResult
 from src.evidence_retrieval import DEFAULT_TOP_K, RetrievalResult, find_evidence
@@ -31,6 +31,7 @@ from src.fulltext_sources import (
     _UNSET, FullTextCache, FullTextFetcher, FullTextResult, FullTextStatus, _Unset,
 )
 from src.reference_lookup import ReferenceLookupAdapter
+from src.reference_matching import MatchDecision, match_reference
 from src.reference_metadata import (
     ReferenceMetadata, extract_reference_metadata, reference_cache_key,
 )
@@ -77,10 +78,15 @@ class EvidenceResolver:
         evidence = resolver.resolve(pair)   # 方法 B 拿到同一份，不會再查一次
     """
 
-    def __init__(self, fulltext: FullTextFetcher, lookup: ReferenceLookupAdapter) -> None:
+    def __init__(self, fulltext: FullTextFetcher, lookup: ReferenceLookupAdapter,
+                 *, match_references: bool = True) -> None:
         self.fulltext = fulltext
         self.lookup = lookup
+        # 書目沒有 DOI／arXiv ID 時，把整條原文丟給 Crossref 比對，驗證過就補上
+        # 識別碼與篇名。關掉的話就只靠本機 regex 解析（實測 7,294 筆語料只抽得到 26%）。
+        self.match_references = match_references
         self._cache: dict[str, SourceEvidence] = {}
+        self._match_cache: dict[str, MatchDecision] = {}
 
     @classmethod
     def from_keys(cls, *, openalex_key: str | None = None, s2_key: str | None = None,
@@ -121,8 +127,35 @@ class EvidenceResolver:
         return evidence, find_evidence(pair.claim_text, evidence.text, top_k=top_k,
                                        source_label=label)
 
+    def _match(self, raw: str, meta: ReferenceMetadata) -> tuple[ReferenceMetadata, str]:
+        """沒有識別碼時用 Crossref 比對補上，比對結果一定要留下紀錄。
+
+        只在「本機解析拿不到識別碼」時才送出，有 DOI 或 arXiv ID 就不浪費請求。
+        """
+
+        if not self.match_references or meta.has_identifier:
+            return meta, ""
+        key = " ".join(raw.split())
+        decision = self._match_cache.get(key)
+        if decision is None:
+            try:
+                decision = match_reference(raw, meta, self.lookup.http)
+            except Exception as error:
+                # 比對層壞掉不可以讓整筆取證失敗，退回本機解析就好
+                return meta, f"書目比對發生錯誤（{type(error).__name__}）"
+            self._match_cache[key] = decision
+        if not decision.confirmed:
+            return meta, f"書目比對未採用（{decision.status.value}；{decision.note}）"
+        note = f"書目比對：{decision.note}"
+        return replace(
+            meta,
+            title=meta.title or decision.title,
+            doi=decision.doi or meta.doi,
+        ), note
+
     def resolve(self, pair: CitationPair) -> SourceEvidence:
         meta = extract_reference_metadata(pair.ref_raw)
+        meta, match_note = self._match(pair.ref_raw, meta)
         # 用書目當鍵，不可以用 ref 編號：不同論文的 [1] 是不同文獻，
         # 用編號當鍵會把別篇論文的全文拿來比對，產生假的「引用與來源不符」
         memo = reference_cache_key(meta) or "raw:" + " ".join(pair.ref_raw.split())
@@ -133,6 +166,8 @@ class EvidenceResolver:
         full = self._fetch_full_text(meta)
         if full.ok:
             note = f"全文：{full.status.value}" + (f"（{full.note}）" if full.note else "")
+            if match_note:
+                note += "；" + match_note
             if full.cache_hit:
                 note += "；沿用先前存下的全文"
             evidence = SourceEvidence(
@@ -145,6 +180,8 @@ class EvidenceResolver:
 
         reference = self._lookup_abstract(pair)
         notes = [_combined_note(full, reference)]
+        if match_note:
+            notes.append(match_note)
         if reference.ref_number != pair.ref_number:
             notes.append(f"⚠️ 查摘要回傳的 ref 編號（{reference.ref_number}）與這一筆（{pair.ref_number}）不符")
         if _status_value(reference.source_status) == SourceStatus.GOT_ABSTRACT.value \
