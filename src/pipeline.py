@@ -12,10 +12,13 @@ from src.adapters import (
     ReferenceLookupAdapter,
     ReferenceLookupResult,
 )
+from src.evidence_selection import select_evidence
 from src.reference_metadata import extract_reference_metadata
+from src.source_evidence import EvidenceResolver
 from src.schemas import (
     AnalysisRow,
     CitationPair,
+    EvidenceBasis,
     MethodResult,
     ReferenceMatchStatus,
     SourceStatus,
@@ -29,8 +32,14 @@ def run_method_a_pipeline(
     jev_adapter: JevAdapter,
     *,
     prepare_reference: Callable[[CitationPair], ReferenceLookupResult] | None = None,
+    evidence_resolver: EvidenceResolver | None = None,
 ) -> list[AnalysisRow]:
-    """Read local metadata first and defer every abstract lookup until Q1 passes."""
+    """Read local metadata first and defer every abstract lookup until Q1 passes.
+
+    傳 ``evidence_resolver`` 時改走現行架構第 5 點：先由第二人的取證層拿到同一份
+    證據（全文優先、退摘要），再交給 adapter 判定。Q1 仍然會問，但它已經不決定
+    要不要取證。不傳的話維持原本的分階段查摘要，既有呼叫端不受影響。
+    """
 
     rows: list[AnalysisRow] = []
     batch_error = ""
@@ -43,7 +52,12 @@ def run_method_a_pipeline(
             reference = ReferenceLookupResult(pair.ref_number, "")
             judgment = JevJudgmentResult(status=JudgmentStatus.BATCH_STOPPED, error_message=batch_error)
         else:
-            reference, judgment = _judge_pair(pair, reference_adapter, jev_adapter, prepare_reference)
+            if evidence_resolver is not None:
+                reference, judgment = _judge_with_evidence(pair, evidence_resolver, jev_adapter)
+            else:
+                reference, judgment = _judge_pair(
+                    pair, reference_adapter, jev_adapter, prepare_reference,
+                )
             if judgment.stop_batch:
                 batch_error = judgment.error_message
         source_status = reference.source_status
@@ -70,6 +84,51 @@ def run_method_a_pipeline(
             )
         )
     return rows
+
+
+def _judge_with_evidence(
+    pair: CitationPair,
+    resolver: EvidenceResolver,
+    jev_adapter: JevAdapter,
+) -> tuple[ReferenceLookupResult, JevJudgmentResult]:
+    """先取證、再判定。取證失敗不可以變成判斷結果。"""
+
+    try:
+        evidence = resolver.resolve(pair)
+    except Exception as error:
+        # 取證層自己壞掉，與「這篇沒有開放存取全文」是兩回事，不可以混
+        return ReferenceLookupResult(pair.ref_number, ""), JevJudgmentResult(
+            status=JudgmentStatus.REFERENCE_ERROR,
+            error_message=f"取得來源內容時發生錯誤（{type(error).__name__}）。",
+        )
+    metadata = extract_reference_metadata(pair.ref_raw)
+    reference = evidence.reference or ReferenceLookupResult(pair.ref_number, metadata.title)
+    if not reference.title.strip():
+        # Q1 要篇名。取證層交回的紀錄沒有篇名時補上本機解析出來的
+        reference = replace(reference, title=metadata.title)
+    if reference.ref_number != pair.ref_number:
+        # 取證層交回別筆 ref 的結果，拿去比對會產生假的「引用與來源不符」
+        return ReferenceLookupResult(pair.ref_number, ""), JevJudgmentResult(
+            status=JudgmentStatus.REFERENCE_ERROR,
+            error_message=f"取得的來源 ref 編號（{reference.ref_number}）與這一筆不符。",
+        )
+    if evidence.unverifiable:
+        # 全文與摘要都沒有。交給 adapter 決定：預設用篇名評分並標「判斷依據＝篇名」
+        # （陳祖旭的做法），傳 title_only_scoring=False 時改標「無法查核」、不給分數。
+        # 取不到的原因一定要跟著走，不可以在這裡丟掉。
+        judgment = jev_adapter.judge(pair, reference)
+        if evidence.note and not judgment.error_message:
+            judgment = replace(judgment, error_message=evidence.note)
+        return reference, judgment
+    selected = select_evidence(
+        pair.claim_text, evidence.text, source_label=evidence.basis.value,
+    )
+    judgment = jev_adapter.judge(
+        pair, reference,
+        evidence_text=selected.text_for_judgement(),
+        evidence_basis=evidence.basis,
+    )
+    return reference, judgment
 
 
 def _judge_pair(

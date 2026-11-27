@@ -209,10 +209,9 @@ class AnalysisRow:
         if result.source_status is SourceStatus.SKIPPED:
             return "篇名不相關，未進行 Q2 證據判斷"
         if result.evidence_basis is EvidenceBasis.TITLE:
-            return (
-                "證據不足，只有篇名可查核" if result.band is SupportBand.UNSUPPORTED
-                else "僅依篇名，尚未查核摘要"
-            )
+            # 全文與摘要都拿不到，只用篇名判斷。評估時要用這個標記把這些列篩掉，
+            # 否則「不支持」裡會混進系統自己抓不到的文獻。
+            return "僅依篇名判斷，未取得被引文獻內容"
         if result.evidence_basis is EvidenceBasis.ABSTRACT and result.band is SupportBand.UNSUPPORTED:
             if self.pair.is_compound and not self.pair.original_claim_text:
                 return "這一篇摘要未能支持整句，未逐項判斷"
