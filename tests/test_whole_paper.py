@@ -425,6 +425,25 @@ def test_vancouver_parenthesized_numbers_and_superscript_numeric():
     ]
 
 
+def test_bracket_numbered_bibliography_does_not_match_parenthesized_steps_or_ranges():
+    paper = ("The first stage used (1) screening, (2) extraction, and (3) review [1]. "
+             "Batch sizes were adjusted to (2-8) samples.\n\nReferences\n"
+             "[1] First source.\n[2] Second source.\n[3] Third source.")
+    result = extract_whole_paper(convert_pasted_paper(paper))
+    assert [pair.citation_marker for pair in result.pairs] == ["[1]"]
+    assert result.pairs[0].reference.ref_id == "ref_n_1"
+
+
+def test_narrative_author_year_followed_by_bracket_number_is_one_citation():
+    paper = ("Wadden et al. (2020) [8] introduced scientific claim verification "
+             "with their SciFact dataset.\n\nReferences\n"
+             "[8] David Wadden et al. SciFact. 2020.")
+    result = extract_whole_paper(convert_pasted_paper(paper))
+    assert len(result.pairs) == 1
+    assert result.pairs[0].citation_marker == "[8]"
+    assert result.pairs[0].reference.ref_id == "ref_n_8"
+
+
 def test_math_exponent_and_equation_number_are_not_citations():
     paper = ("The formula uses x^{2}, as in Eq. (1). A cited result.^{1}\n\n"
              "References\n[1] A. Author, Source.")

@@ -495,6 +495,13 @@ def _mentions(segment: str, *, allow_parenthesized_numeric: bool = True) -> tupl
         if any(parent.start() <= match.start() < parent.end()
                for parent in _PAREN_CITATION.finditer(segment)):
             continue
+        if any(mention.number is not None and mention.marker.startswith("[")
+               and mention.start >= match.end()
+               and not segment[match.end():mention.start].strip()
+               for mention in found):
+            # "Wadden et al. (2020) [8]" names the author of [8]; it is
+            # one citation, not an author-year citation plus a second source.
+            continue
         add(_Mention(match.group(), start=match.start(), first_author=match["first"],
                      second_author=match["second"] or "", year=match["year"]))
     return sorted(found, key=lambda mention: mention.start), duplicates, invalid
@@ -541,7 +548,12 @@ def extract_whole_paper(document: ConvertedDocument) -> WholePaperOutcome:
         if re.fullmatch(r"(?:\[\d+\]|\[@[A-Za-z0-9_-]+\])", ref.raw_text.strip())
     )
     references = tuple(ref for ref in parsed_references if ref not in incomplete_references)
-    numeric_references_present = any(ref.ref_id.startswith("ref_n_") for ref in references)
+    # Parenthesized numerals are valid in Vancouver-style papers, but in a
+    # bibliography labelled [1], [2] they are usually list steps or ranges.
+    parenthesized_numeric_references = any(
+        re.match(r"^[1-9]\d{0,2}[.)]\s+", ref.raw_text)
+        for ref in references if ref.ref_id.startswith("ref_n_")
+    )
     issues: list[ExtractionIssue] = []
     pairs: list[CitationHandoff] = []
     for ref in incomplete_references:
@@ -563,7 +575,7 @@ def extract_whole_paper(document: ConvertedDocument) -> WholePaperOutcome:
             if end is not None:
                 cursor = end
             mentions, duplicates, invalid = _mentions(
-                segment, allow_parenthesized_numeric=numeric_references_present,
+                segment, allow_parenthesized_numeric=parenthesized_numeric_references,
             )
             for marker in dict.fromkeys(duplicates):
                 issues.append(ExtractionIssue("REPEATED_REFERENCE_IN_CLAIM",
