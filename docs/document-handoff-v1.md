@@ -1,7 +1,7 @@
 # 文件轉換與第二人交接契約 v1（待團隊確認）
 
-基準：origin/main 的 4a755d4；開發分支 feature/document-conversion-v1。
-本文件是第一人的實作提案，尚未表示第二人已確認。既有 CitationPair、ReferenceLookupResult 介面不變。
+目前實作位於 `feature/document-conversion-v1`；完整交件方式見 [團隊對接資料](team-integration-handoff.md)。
+本文件描述已實作的第一人輸出格式；第二、三人的新版回傳格式尚待團隊確認。既有 CitationPair、ReferenceLookupResult 介面不變。
 
 ## 文件轉換
 
