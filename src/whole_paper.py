@@ -76,6 +76,7 @@ _REFERENCE_END_HEADING = re.compile(
     re.I,
 )
 _REFERENCE_END_NOTICE = re.compile(r"^How to cite this article\s*:", re.I)
+_TABLE_CAPTION = re.compile(r"^\s*Table\s+\d+[.:]", re.I)
 _APPENDIX_HEADING = re.compile(r"^[A-Z]\s+[A-Z][A-Za-z][A-Za-z ]{6,80}$")
 _AUTHOR_BIO_START = re.compile(
     r"^[A-Z][A-Za-z .'-]{2,80}(?:\s*\([^)]{1,45}\))?\s+received\s+(?:his|her|the|a)\b",
@@ -148,6 +149,47 @@ def _lines(document: ConvertedDocument) -> list[_Line]:
         for block in document.blocks
         for number, line in enumerate(block.markdown.splitlines(), 1)
     ]
+
+
+def _table_block_ids(document: ConvertedDocument) -> set[str]:
+    """Exclude PDF table cells when overlapping text blocks lead to a caption."""
+    if document.source_format != "pdf":
+        return set()
+    excluded: set[str] = set()
+    blocks = [block for block in document.blocks if block.page and block.bbox]
+    for caption in blocks:
+        if not _TABLE_CAPTION.match(caption.markdown):
+            continue
+        candidates = [
+            block for block in blocks if block.page == caption.page
+            and block.block_id != caption.block_id
+            and caption.bbox[1] - 450 <= block.bbox[1] < caption.bbox[1]
+            and block.bbox[3] <= caption.bbox[1] + 4
+        ]
+        neighbors: dict[str, set[str]] = {block.block_id: set() for block in candidates}
+        for index, left in enumerate(candidates):
+            for right in candidates[index + 1:]:
+                horizontal = min(left.bbox[2], right.bbox[2]) - max(left.bbox[0], right.bbox[0])
+                vertical = min(left.bbox[3], right.bbox[3]) - max(left.bbox[1], right.bbox[1])
+                if horizontal > 5 and vertical > 5:
+                    neighbors[left.block_id].add(right.block_id)
+                    neighbors[right.block_id].add(left.block_id)
+        by_id = {block.block_id: block for block in candidates}
+        seen: set[str] = set()
+        for block in candidates:
+            if block.block_id in seen or not neighbors[block.block_id]:
+                continue
+            component = {block.block_id}
+            seen.add(block.block_id)
+            pending = [block.block_id]
+            while pending:
+                for item in neighbors[pending.pop()] - seen:
+                    seen.add(item)
+                    component.add(item)
+                    pending.append(item)
+            if max(by_id[item].bbox[3] for item in component) >= caption.bbox[1] - 50:
+                excluded.update(component)
+    return excluded
 
 
 def _locations(lines: list[_Line]) -> tuple[SourceLocation, ...]:
@@ -530,11 +572,14 @@ def _candidates(mention: _Mention, refs: tuple[ReferenceCandidate, ...]) -> list
         base_id = f"ref_n_{mention.number}"
         return [ref for ref in refs if ref.ref_id == base_id
                 or ref.ref_id.startswith(base_id + "_dup")]
-    first = mention.first_author.casefold()
-    second = mention.second_author.casefold()
+    # ACL entries may give a full name ("Teixeira da Silva") while the
+    # in-text citation uses only the family name ("da Silva").
+    first = mention.first_author.casefold().split()[-1]
+    second = mention.second_author.casefold().split()[-1] if mention.second_author else ""
     return [ref for ref in refs if ref.year.casefold() == mention.year.casefold()
-            and ref.authors and ref.authors[0].casefold() == first
-            and (not second or len(ref.authors) > 1 and ref.authors[1].casefold() == second)]
+            and ref.authors and ref.authors[0].casefold().split()[-1] == first
+            and (not second or len(ref.authors) > 1
+                 and ref.authors[1].casefold().split()[-1] == second)]
 
 
 def extract_whole_paper(document: ConvertedDocument) -> WholePaperOutcome:
@@ -546,7 +591,9 @@ def extract_whole_paper(document: ConvertedDocument) -> WholePaperOutcome:
     note_references = _parse_note_references(note_lines)
     section_found = bool(headings or note_references)
     boundary = headings[-1] if headings else len(lines)
-    body = _paragraphs(lines[:boundary])
+    table_blocks = _table_block_ids(document)
+    body = _paragraphs([line for line in lines[:boundary]
+                        if line.block_id not in table_blocks])
     reference_lines = lines[boundary + 1:] if headings else []
     for index, line in enumerate(reference_lines):
         if re.match(r"^\s*(?:APPENDIX\b|APPENDICES\b)", line.text, re.I):
@@ -565,6 +612,11 @@ def extract_whole_paper(document: ConvertedDocument) -> WholePaperOutcome:
         for ref in references if ref.ref_id.startswith("ref_n_")
     )
     issues: list[ExtractionIssue] = []
+    if table_blocks:
+        issues.append(ExtractionIssue(
+            "TABLE_BLOCKS_EXCLUDED",
+            f"已排除 {len(table_blocks)} 個表格文字區塊，避免將資料集範例當成本文引用。",
+        ))
     pairs: list[CitationHandoff] = []
     for ref in incomplete_references:
         issues.append(ExtractionIssue(

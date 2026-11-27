@@ -462,6 +462,37 @@ def test_illustrative_quoted_author_year_is_not_a_citation():
     assert result.pairs[0].match_status == "missing_reference"
 
 
+def test_author_particle_matches_full_name_acl_reference():
+    paper = ("da Silva et al. (2023) examined citation ethics.\n\nReferences\n"
+             "Jaime A. Teixeira da Silva, Neil J. Vickers, and Serhii Nazarovets. "
+             "2023. From citation metrics to citation ethics.")
+    result = extract_whole_paper(convert_pasted_paper(paper))
+    assert len(result.pairs) == 1
+    assert result.pairs[0].match_status == "matched"
+    assert result.pairs[0].reference.ref_id == "ref_a_001"
+
+
+def test_pdf_table_examples_are_excluded_but_adjacent_prose_is_retained():
+    blocks = (
+        DocumentBlock("block_1", "A real study [1].", "page:1/block:1", 1,
+                      (72, 30, 250, 60)),
+        DocumentBlock("block_2", "Category\nCitation Context", "page:1/block:2", 1,
+                      (80, 80, 250, 170)),
+        DocumentBlock("block_3", "Sample (Robertson et al., 1994).", "page:1/block:3", 1,
+                      (100, 100, 400, 185)),
+        DocumentBlock("block_4", "Table 1: Samples of each category.", "page:1/block:4", 1,
+                      (170, 210, 400, 225)),
+        DocumentBlock("block_5", "References", "page:2/block:1", 2,
+                      (72, 50, 200, 65)),
+        DocumentBlock("block_6", "[1] A. Author. A real source.", "page:2/block:2", 2,
+                      (72, 75, 450, 90)),
+    )
+    document = ConvertedDocument("test-doc", "paper.pdf", "pdf", "", blocks, (), "test")
+    result = extract_whole_paper(document)
+    assert [pair.citation_marker for pair in result.pairs] == ["[1]"]
+    assert any(issue.code == "TABLE_BLOCKS_EXCLUDED" for issue in result.issues)
+
+
 def test_math_exponent_and_equation_number_are_not_citations():
     paper = ("The formula uses x^{2}, as in Eq. (1). A cited result.^{1}\n\n"
              "References\n[1] A. Author, Source.")
