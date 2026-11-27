@@ -3,7 +3,18 @@
 from io import BytesIO
 
 from src.document_conversion import ConvertedDocument, DocumentBlock, convert_document, convert_pasted_paper
-from src.whole_paper import _repair_pdf_reference_url_gaps, extract_whole_paper
+from src.whole_paper import _Line, _join_reference_lines, _repair_pdf_reference_url_gaps, extract_whole_paper
+
+
+def test_pdf_reference_line_fragments_join_after_entry_boundary_is_known():
+    lines = [
+        _Line("Ani Nenkova, and By-", "b1", "page:1/block:1", 1, 1, None),
+        _Line("ron Wallace. A zero-", "b2", "page:1/block:2", 1, 1, None),
+        _Line("assumption study.", "b3", "page:1/block:3", 1, 1, None),
+    ]
+    assert _join_reference_lines(lines) == (
+        "Ani Nenkova, and Byron Wallace. A zero-assumption study."
+    )
 
 
 def test_numeric_citations_match_only_cited_refs_and_expand_range():

@@ -2,11 +2,65 @@ from io import BytesIO
 from zipfile import ZipFile
 import pytest
 from src.document_conversion import (
-    ConversionError, DocumentBlock, _order_pdf_page, _pdf_reference_label_first,
+    ConversionError, DocumentBlock, _order_pdf_page, _pdf_normalize_hyphens,
+    _pdf_reference_label_first,
     conversion_capabilities, convert_document, convert_pasted_paper,
 )
 from src.document_handoff import CitationHandoff, ReferenceCandidate
 from src.whole_paper import extract_whole_paper
+
+
+def test_pdf_soft_hyphens_join_words_but_keep_real_compounds():
+    blocks = [DocumentBlock(
+        "b1", "The ci-\ntations can dis-\ntort findings. An af-\nfecting result. "
+        "A four-\nlabel system uses Mistral-\nAI and sub-\ncategories. "
+        "Qwen3-\n8B uses a model. SUP-\nPORTED and PAR-\nTIALLY are labels; "
+        "LLM-\nbased methods appear.",
+        "page:1/block:1", 1, (72, 80, 500, 220),
+    )]
+    text = _pdf_normalize_hyphens(blocks)[0].markdown
+    assert "citations can distort findings" in text
+    assert "affecting result" in text
+    assert "four-label" in text
+    assert "Mistral-AI" in text
+    assert "sub-categories" in text
+    assert "Qwen3-8B" in text
+    assert "SUPPORTED and PARTIALLY" in text
+    assert "LLM-based" in text
+
+
+def test_pdf_name_fragments_join_across_adjacent_blocks_with_bbox_union():
+    blocks = [
+        DocumentBlock("b1", "Ser-", "page:8/block:1", 8, (306, 100, 525, 115)),
+        DocumentBlock("b2", "hii Nazarovets. Bor-\ndignon.", "page:8/block:2", 8,
+                      (316, 117, 525, 170)),
+    ]
+    result = _pdf_normalize_hyphens(blocks)
+    assert len(result) == 1
+    assert result[0].markdown == "Serhii Nazarovets. Bordignon."
+    assert result[0].block_id == "b1"
+    assert result[0].bbox == (306, 100, 525, 170)
+
+
+def test_pdf_dehyphenation_reaches_handoff_claim_context_and_reference():
+    import pymupdf
+
+    pdf = pymupdf.open()
+    body = pdf.new_page()
+    body.insert_text((72, 72), "These citations can dis-", fontsize=11)
+    body.insert_text((72, 86), "tort the evidence [1].", fontsize=11)
+    references = pdf.new_page()
+    references.insert_text((72, 72), "References", fontsize=11)
+    references.insert_text((72, 100), "[1] A. Author, An af-", fontsize=11)
+    references.insert_text((72, 114), "fecting result.", fontsize=11)
+
+    outcome = extract_whole_paper(convert_document(pdf.tobytes(), "paper.pdf"))
+    assert len(outcome.pairs) == 1
+    pair = outcome.pairs[0]
+    assert "distort" in pair.claim_text
+    assert "dis-" not in pair.context
+    assert "affecting" in pair.reference.raw_text
+    assert "af-" not in pair.reference.raw_text
 
 
 @pytest.mark.parametrize("extension", ["html", "xml", "md", "txt", "doc"])

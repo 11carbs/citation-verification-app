@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import re
 
 from src.citation_parser import CitationParseError, extract_citation_groups, split_claim_segments
-from src.document_conversion import ConvertedDocument
+from src.document_conversion import ConvertedDocument, _pdf_keep_hyphen
 from src.document_handoff import CitationHandoff, ReferenceCandidate, SourceLocation
 
 
@@ -288,6 +288,28 @@ def _repair_pdf_reference_url_gaps(raw: str) -> str:
     return raw
 
 
+def _join_reference_lines(lines: list[_Line]) -> str:
+    """Join PDF reference lines after their entry boundary is known."""
+    result = ""
+    known = {f"{left}-{right}".casefold() for line in lines
+             for left, right in re.findall(r"\b([A-Za-z]{2,})-([A-Za-z]{2,})\b",
+                                           line.text)}
+    for line in lines:
+        part = line.text.strip()
+        if not part:
+            continue
+        ending = re.search(r"(?P<left>[A-Za-zÀ-ÖØ-öø-ÿ0-9]{1,30})-$", result)
+        beginning = re.match(r"(?P<right>[A-Za-zÀ-ÖØ-öø-ÿ0-9]{1,30})", part)
+        if line.page is not None and ending and beginning:
+            left, right = ending["left"], beginning["right"]
+            url = re.search(r"https?://\S*$", result[:ending.start()], re.I)
+            separator = "-" if url or _pdf_keep_hyphen(left, right, known) else ""
+            result = result[:-1] + separator + part
+        else:
+            result = f"{result} {part}" if result else part
+    return result
+
+
 def _parse_references(lines: list[_Line]) -> tuple[ReferenceCandidate, ...]:
     entries: list[ReferenceCandidate] = []
     current: list[_Line] = []
@@ -314,7 +336,7 @@ def _parse_references(lines: list[_Line]) -> tuple[ReferenceCandidate, ...]:
 
     def flush() -> None:
         if current:
-            raw = " ".join(line.text.strip() for line in current)
+            raw = _join_reference_lines(current)
             if any(line.page is not None for line in current):
                 raw = _repair_pdf_reference_url_gaps(raw)
             entry_year = year
@@ -369,7 +391,7 @@ def _parse_references(lines: list[_Line]) -> tuple[ReferenceCandidate, ...]:
             number = None  # A DOI/URL line fragment is not a new reference.
         structural = None if number else _STRUCT_REF.match(text)
         author = None if numeric_style or structural_style or acl_style or number or structural else _AUTHOR_REF.match(text)
-        apa_lookahead = " ".join(item.text.strip() for item in lines[index:index + 7])
+        apa_lookahead = _join_reference_lines(lines[index:index + 7])
         acl_window = [line]
         for next_line in lines[index + 1:index + 40]:
             if (line.page is not None and next_line.bbox and line.bbox
@@ -379,7 +401,7 @@ def _parse_references(lines: list[_Line]) -> tuple[ReferenceCandidate, ...]:
                          or next_line.bbox[0] <= line.bbox[0] + 5)):
                 break  # The next outdented PDF block begins another entry.
             acl_window.append(next_line)
-        acl_lookahead = " ".join(item.text.strip() for item in acl_window)
+        acl_lookahead = _join_reference_lines(acl_window)
         if not author and not (numeric_style or structural_style or acl_style or number or structural):
             if _AUTHOR_LIST_START.match(text):
                 author = _AUTHOR_REF.match(apa_lookahead)
@@ -407,8 +429,14 @@ def _parse_references(lines: list[_Line]) -> tuple[ReferenceCandidate, ...]:
                 and line.bbox[0] + 5 < current[-1].bbox[0]
             )
             year_line = bool(re.search(r"\b(?:19|20)\d{2}[a-z]?\.\s*$", text))
+            next_year_line = bool(
+                index + 1 < len(lines)
+                and re.match(r"^(?:19|20)\d{2}[a-z]?\.\s+\S",
+                             lines[index + 1].text.strip())
+            )
             if not acl_author and can_start and (
-                    not text.endswith(".") or year_line or outdented or not current):
+                    not text.endswith(".") or year_line or next_year_line
+                    or outdented or not current):
                 acl_author = _ACL_REF.match(acl_lookahead)
             if (acl_author and current and len(current) <= 2 and year == acl_author["year"]
                     and not _ACL_REF.match(current[0].text)):

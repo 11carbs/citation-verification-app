@@ -12,6 +12,82 @@ from zipfile import ZipFile
 SUPPORTED_EXTENSIONS = ("pdf", "docx")
 MAX_BYTES = 30 * 1024 * 1024
 _WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+_PDF_LINE_HYPHEN = re.compile(
+    r"(?P<left>[A-Za-zÀ-ÖØ-öø-ÿ0-9]{1,30})-[ \t]*\n[ \t]*"
+    r"(?P<right>[A-Za-zÀ-ÖØ-öø-ÿ0-9]{1,30})"
+)
+_PDF_BLOCK_HYPHEN = re.compile(r"(?P<left>[A-Za-zÀ-ÖØ-öø-ÿ0-9]{1,30})-$")
+_PDF_BLOCK_CONTINUATION = re.compile(r"^(?P<right>[A-Za-zÀ-ÖØ-öø-ÿ0-9]{1,30})")
+# These are lexical compounds, not printer-added word breaks. Unknown pairs
+# are joined without the hyphen so rare names such as Ser-hii are recovered.
+_PDF_TRUE_COMPOUNDS = {
+    "four-label", "sub-category", "sub-categories", "state-of",
+    "few-shot", "real-world", "highly-cited", "mistral-small",
+    "cross-domain", "open-source", "large-scale", "full-text",
+    "long-context", "low-resource", "high-quality", "self-hosted",
+    "peer-reviewed", "multi-domain", "zero-shot", "one-shot",
+    "end-to-end", "state-of-the-art", "human-annotated",
+    "co-cited", "inter-annotator", "cloud-based", "cross-database",
+    "multi-source", "venue-specific", "cosine-similarity", "fine-tuning",
+    "off-topic", "high-throughput", "label-prediction", "sci-fact",
+    "zero-assumption",
+}
+_PDF_LEFT_ACRONYMS = {
+    "AI", "API", "BERT", "BM25", "DOI", "FAISS", "GPT", "IEEE", "LLM",
+    "NLI", "PDF", "RAG", "TF", "TPR", "W3C", "XML",
+}
+_PDF_RIGHT_ACRONYMS = {"AI", "API", "FPR", "IDF", "LLM", "NLI", "PDF", "RAG", "TPR"}
+
+
+def _pdf_keep_hyphen(left: str, right: str, known: set[str]) -> bool:
+    pair = f"{left}-{right}".casefold()
+    return (pair in _PDF_TRUE_COMPOUNDS or pair in known
+            or left in _PDF_LEFT_ACRONYMS or right in _PDF_RIGHT_ACRONYMS
+            or any(character.isdigit() for character in left + right))
+
+
+def _pdf_join_line_hyphens(text: str, known: set[str]) -> str:
+    def replace(match: re.Match[str]) -> str:
+        left, right = match["left"], match["right"]
+        line_start = text.rfind("\n", 0, match.start()) + 1
+        if re.search(r"https?://\S*$", text[line_start:match.start()], re.I):
+            return f"{left}-{right}"
+        return left + ("-" if _pdf_keep_hyphen(left, right, known) else "") + right
+
+    return _PDF_LINE_HYPHEN.sub(replace, text)
+
+
+def _pdf_normalize_hyphens(blocks: list[DocumentBlock]) -> list[DocumentBlock]:
+    raw = "\n".join(block.markdown for block in blocks)
+    known = {f"{left}-{right}".casefold() for left, right in re.findall(
+        r"\b([A-Za-zÀ-ÖØ-öø-ÿ]{2,})-([A-Za-zÀ-ÖØ-öø-ÿ]{2,})\b(?![ \t]*\n)", raw
+    )}
+    normalized = [DocumentBlock(block.block_id,
+                                _pdf_join_line_hyphens(block.markdown, known),
+                                block.locator, block.page, block.bbox)
+                  for block in blocks]
+    merged: list[DocumentBlock] = []
+    for block in normalized:
+        previous = merged[-1] if merged else None
+        ending = _PDF_BLOCK_HYPHEN.search(previous.markdown) if previous else None
+        beginning = _PDF_BLOCK_CONTINUATION.match(block.markdown)
+        if (previous and ending and beginning and previous.page == block.page
+                and previous.bbox and block.bbox
+                and -2 <= block.bbox[1] - previous.bbox[3] <= 8
+                and previous.bbox[0] + 5 <= block.bbox[0] <= previous.bbox[0] + 25):
+            left, right = ending["left"], beginning["right"]
+            url = re.search(r"https?://\S*$", previous.markdown[:ending.start()], re.I)
+            separator = "-" if url or _pdf_keep_hyphen(left, right, known) else ""
+            text = previous.markdown[:-1] + separator + block.markdown
+            box = (min(previous.bbox[0], block.bbox[0]),
+                   min(previous.bbox[1], block.bbox[1]),
+                   max(previous.bbox[2], block.bbox[2]),
+                   max(previous.bbox[3], block.bbox[3]))
+            merged[-1] = DocumentBlock(previous.block_id, text, previous.locator,
+                                       previous.page, box)
+        else:
+            merged.append(block)
+    return merged
 
 
 def _word_tag(name: str) -> str:
@@ -182,7 +258,7 @@ def convert_document(data: bytes, filename: str) -> ConvertedDocument:
     try:
         if extension == "pdf":
             import pymupdf
-            converter = "pymupdf-text-blocks-v1"
+            converter = "pymupdf-text-blocks-v2"
             with pymupdf.open(stream=data, filetype="pdf") as document:
                 if document.needs_pass:
                     raise ConversionError("ENCRYPTED_PDF", "PDF 需要密碼，請上傳可讀取版本。")
@@ -244,7 +320,8 @@ def convert_document(data: bytes, filename: str) -> ConvertedDocument:
             blocks = [block for block in blocks if not (block.page and block.bbox
                       and block.bbox[1] < 60 and any(
                           header_key(block.markdown).startswith(key) for key in repeated))]
-            warnings.append("PDF 已擷取可選取的文字，並嘗試依雙欄閱讀順序排列。註腳、表格與公式可能漏掉或排錯，請人工核對；圖片掃描頁尚不能辨識文字。")
+            blocks = _pdf_normalize_hyphens(blocks)
+            warnings.append("PDF 已擷取可選取的文字，並嘗試依雙欄閱讀順序排列及修復跨行斷字；少數真正連字號仍可能誤判。註腳、表格與公式可能漏掉或排錯，請人工核對；圖片掃描頁尚不能辨識文字。")
         elif extension == "docx":
             from docx import Document
             from docx.table import Table
