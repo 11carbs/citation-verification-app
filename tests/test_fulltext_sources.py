@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from src.fulltext_sources import (
+    ARXIV_API,
     Download,
     FullTextCache,
     FullTextFetcher,
@@ -173,7 +174,10 @@ def test_doi_lookup_does_not_spend_a_search_call():
 
     fetcher.fetch(ReferenceMetadata(title="Fabrication", doi="10.1038/x"))
 
-    assert downloader.calls == ["https://api.openalex.org/works/doi:10.1038/x"]
+    openalex = [call for call in downloader.calls if "api.openalex.org" in call]
+    assert openalex == ["https://api.openalex.org/works/doi:10.1038/x"]
+    # OpenAlex 沒有可用位置時還會用篇名查 arXiv 預印本，但那打的是 arXiv，不花 OpenAlex credits
+    assert downloader.calls[-1] == ARXIV_API
 
 
 def test_title_only_falls_back_to_search():
@@ -182,14 +186,17 @@ def test_title_only_falls_back_to_search():
 
     fetcher.fetch(ReferenceMetadata(title="Some paper with no identifier"))
 
-    assert downloader.calls == ["https://api.openalex.org/works"]
+    openalex = [call for call in downloader.calls if "api.openalex.org" in call]
+    assert openalex == ["https://api.openalex.org/works"]
+    assert downloader.calls[-1] == ARXIV_API
 
 
 # ---------------------------------------------------------------- 失敗狀態要分開
 
 
 def test_no_open_access_location_is_not_a_failure():
-    downloader = FakeDownloader({"https://api.openalex.org/works/doi:": openalex_work([])})
+    downloader = FakeDownloader({"https://api.openalex.org/works/doi:": openalex_work([]),
+                                 ARXIV_API: arxiv_feed()})
 
     result = FullTextFetcher(downloader=downloader).fetch(ReferenceMetadata(doi="10.1/x", title="t"))
 
@@ -432,6 +439,19 @@ def test_downloader_cooldown_after_429_skips_the_next_call():
     assert downloader.attempts[-1]["reason"] == "cooldown_after_429"
 
 
+def test_the_default_size_limit_covers_a_figure_heavy_paper():
+    """上面那個測試自己傳 ``max_bytes=1024``，所以蓋到的是機制，不是預設值。
+
+    預設值要另外釘住：2026-11-26 實測 112 筆被引文獻，被大小上限擋掉的三筆分別是
+    33.7、34.2、36.4 MB，都是 arXiv 上圖很多的視覺／圖學論文。上限訂在它們之下，
+    等於系統性丟掉那個領域的證據，而且會被記成「下載失敗」而不是「檔案太大」。
+    """
+
+    from src.fulltext_sources import MAX_DOWNLOAD_BYTES
+
+    assert MAX_DOWNLOAD_BYTES >= 40 * 1024 * 1024
+
+
 def test_downloader_rejects_oversize_file():
     from src.fulltext_sources import RequestsDownloader
 
@@ -582,7 +602,8 @@ def test_title_search_accepts_a_matching_paper():
 
 
 def test_no_open_access_result_still_explains_itself():
-    downloader = _SequenceDownloader({"https://api.openalex.org/works/doi:": openalex_work([])})
+    downloader = _SequenceDownloader({"https://api.openalex.org/works/doi:": openalex_work([]),
+                                      ARXIV_API: arxiv_feed()})
 
     result = FullTextFetcher(downloader=downloader).fetch(ReferenceMetadata(doi="10.1/x", title="t"))
 
@@ -596,6 +617,7 @@ def test_europe_pmc_404_is_absence_not_failure():
         "https://api.openalex.org/works/doi:": openalex_work(locations),
         "https://www.ebi.ac.uk/europepmc": Download(status=404, error="HTTP 404"),
         "https://europepmc.org/articles/PMC9": Download(status=404, error="HTTP 404"),
+        ARXIV_API: arxiv_feed(),
     })
 
     result = FullTextFetcher(downloader=downloader).fetch(ReferenceMetadata(doi="10.1/x", title="t"))
@@ -849,3 +871,242 @@ def test_an_empty_landing_page_still_falls_back_to_the_pdf(monkeypatch):
     assert result.status is FullTextStatus.GOT_FULL_TEXT
     assert result.source == "oa_pdf"
     assert "短到不像全文" in result.note
+
+
+# ------------------------------------------- 用篇名查 arXiv 預印本（2026-11-26 新增）
+#
+# 實測動機：112 筆被引文獻裡 7 筆被 OpenAlex 判為「沒有開放存取位置」，幾乎都是
+# IEEE／ACM 的會議論文；同一篇的 arXiv 預印本存在，只是掛在另一筆 OpenAlex 紀錄上。
+
+
+def arxiv_feed(*entries: tuple[str, str]) -> Download:
+    items = "".join(
+        f"<entry><id>http://arxiv.org/abs/{ident}</id><title>{title}</title></entry>"
+        for ident, title in entries)
+    body = f'<feed xmlns="http://www.w3.org/2005/Atom">{items}</feed>'
+    return Download(status=200, content_type="application/atom+xml", body=body.encode("utf-8"))
+
+
+ARXIV_BODY = ("<html><body><h1>t</h1>"
+              + "<p>The preprint body is long enough to look like a real article. </p>" * 30
+              + "</body></html>")
+
+
+def test_no_oa_location_falls_back_to_an_arxiv_title_search():
+    """會議版 DOI 沒有 OA 位置時，要去找同一篇的 arXiv 預印本。"""
+
+    title = "3D Gaussian Splatting for Real-Time Radiance Field Rendering"
+    downloader = FakeDownloader({
+        "https://api.openalex.org/works/doi:": openalex_work([]),
+        ARXIV_API: arxiv_feed(("2308.04079v1", title)),
+        "https://arxiv.org/html/2308.04079": page(ARXIV_BODY),
+    })
+
+    result = FullTextFetcher(downloader=downloader, cache=None).fetch(
+        ReferenceMetadata(doi="10.1145/3592433", title=title))
+
+    assert result.status is FullTextStatus.GOT_FULL_TEXT
+    assert result.source == "arxiv_html"
+    assert "2308.04079" in result.note
+
+
+def test_a_mismatched_arxiv_title_is_not_used():
+    """拿錯論文的全文去比對會變成假的「引用與來源不符」，所以篇名不夠像就不能用。"""
+
+    downloader = FakeDownloader({
+        "https://api.openalex.org/works/doi:": openalex_work([]),
+        ARXIV_API: arxiv_feed(("2301.00001v1", "A completely different paper about protein folding")),
+        "https://arxiv.org/html/2301.00001": page(ARXIV_BODY),
+    })
+
+    result = FullTextFetcher(downloader=downloader, cache=None).fetch(
+        ReferenceMetadata(doi="10.1/x", title="Federated learning for intrusion detection in vehicles"))
+
+    assert result.status is FullTextStatus.NO_OPEN_ACCESS
+    assert "篇名相符" in result.note
+    assert "https://arxiv.org/html/2301.00001" not in downloader.calls
+
+
+def test_an_arxiv_search_failure_is_not_reported_as_no_open_access():
+    """arXiv 查詢被限流不代表這篇沒有開放存取全文，狀態要分開。"""
+
+    downloader = FakeDownloader({
+        "https://api.openalex.org/works/doi:": openalex_work([]),
+        ARXIV_API: Download(status=429, error="HTTP 429"),
+    })
+
+    result = FullTextFetcher(downloader=downloader, cache=None).fetch(
+        ReferenceMetadata(doi="10.1/x", title="Some conference paper"))
+
+    assert result.status is FullTextStatus.FETCH_FAILED
+    assert "429" in result.note
+
+
+def test_a_reference_that_already_has_an_arxiv_id_does_not_search_by_title():
+    """arXiv ID 那條路前面就試過了，再用篇名查同一篇是白花一次額度。"""
+
+    downloader = FakeDownloader({"https://api.openalex.org/works/doi:": openalex_work([])})
+
+    FullTextFetcher(downloader=downloader, cache=None).fetch(
+        ReferenceMetadata(doi="10.1/x", title="t", arxiv_id="2501.00001"))
+
+    assert ARXIV_API not in downloader.calls
+
+
+def test_a_reference_without_a_title_does_not_search_arxiv():
+    downloader = FakeDownloader({"https://api.openalex.org/works/doi:": openalex_work([])})
+
+    FullTextFetcher(downloader=downloader, cache=None).fetch(ReferenceMetadata(doi="10.1/x"))
+
+    assert ARXIV_API not in downloader.calls
+
+
+def test_the_arxiv_version_suffix_is_stripped():
+    """<id> 是 .../abs/2308.04079v3，要拿掉版本號才接得上 arXiv HTML 的網址。"""
+
+    from src.fulltext_sources import _best_arxiv_match
+
+    feed = arxiv_feed(("2308.04079v3", "Exactly The Same Title")).text
+    assert _best_arxiv_match(feed, "Exactly The Same Title") == ("2308.04079", "")
+
+
+def test_a_malformed_arxiv_feed_does_not_crash():
+    from src.fulltext_sources import _best_arxiv_match
+
+    arxiv_id, problem = _best_arxiv_match("<feed><entry>", "anything")
+    assert arxiv_id == ""
+    assert problem  # 讀不出來要有原因，不可以跟「查無」混成一種
+
+
+# ------------------- 審查帶出的修正（2026-11-26 fresh-eyes review）
+
+
+def test_an_arxiv_query_404_is_a_failure_not_an_absence():
+    """``export.arxiv.org/api/query`` 是查詢端點，不是某一篇的網址。
+
+    這裡的 404 代表端點或參數有問題，不代表這篇沒有預印本；端點壞掉是全批一致的，
+    記成「沒有開放存取全文」會讓整批 ref 被誤判。
+    代價要講明白：加了這條路之後，「沒有開放存取全文」這個結論就依賴 arXiv 連得上。
+    """
+
+    downloader = FakeDownloader({
+        "https://api.openalex.org/works/doi:": openalex_work([]),
+        ARXIV_API: Download(status=404, error="HTTP 404"),
+    })
+
+    result = FullTextFetcher(downloader=downloader, cache=None).fetch(
+        ReferenceMetadata(doi="10.1/x", title="A paper with a reasonably long title"))
+
+    assert result.status is FullTextStatus.FETCH_FAILED
+
+
+def test_an_unreadable_arxiv_response_is_not_reported_as_no_open_access():
+    """arXiv 過載時會回 HTTP 200 的 HTML 頁。解析失敗當成「查無」就會變成假結論。"""
+
+    downloader = FakeDownloader({
+        "https://api.openalex.org/works/doi:": openalex_work([]),
+        ARXIV_API: page("<html><body>arXiv is temporarily unavailable</body></html>"),
+    })
+
+    result = FullTextFetcher(downloader=downloader, cache=None).fetch(
+        ReferenceMetadata(doi="10.1/x", title="A paper with a reasonably long title"))
+
+    assert result.status is FullTextStatus.FETCH_FAILED
+    assert "讀不出來" in result.note
+
+
+def test_an_arxiv_error_feed_is_not_reported_as_no_open_access():
+    feed = Download(status=200, content_type="application/atom+xml", body=(
+        '<feed xmlns="http://www.w3.org/2005/Atom"><entry>'
+        '<id>http://arxiv.org/api/errors#incorrect_id_format</id>'
+        '<title>Error</title></entry></feed>').encode("utf-8"))
+    downloader = FakeDownloader({
+        "https://api.openalex.org/works/doi:": openalex_work([]),
+        ARXIV_API: feed,
+    })
+
+    result = FullTextFetcher(downloader=downloader, cache=None).fetch(
+        ReferenceMetadata(doi="10.1/x", title="A paper with a reasonably long title"))
+
+    assert result.status is FullTextStatus.FETCH_FAILED
+
+
+def test_a_reference_without_an_identifier_needs_an_exact_arxiv_title():
+    """沒有 DOI、arXiv ID 時門檻是完全相符，與 reference_lookup 查摘要那條路一致。
+
+    0.90 的門檻會讓「同名不同篇」「續作」中選，而查摘要那條路在同樣情況要求完全相符——
+    兩條路標準不同，同一筆 ref 的全文與摘要就會來自不同論文。
+    """
+
+    # RT-X 與 RT-2-X 是不同的模型、不同的論文，相似度 0.983：過得了 0.90，過不了 1.0
+    ref = "Open X-Embodiment: Robotic Learning Datasets and RT-X Models"
+    other = "Open X-Embodiment: Robotic Learning Datasets and RT-2-X Models"
+    downloader = FakeDownloader({
+        "https://api.openalex.org/works": openalex_work([]),
+        ARXIV_API: arxiv_feed(("2310.08864v5", other)),
+        "https://arxiv.org/html/2310.08864": page(ARXIV_BODY),
+    })
+
+    result = FullTextFetcher(downloader=downloader, cache=None).fetch(
+        ReferenceMetadata(title=ref))
+
+    assert result.status is FullTextStatus.NO_OPEN_ACCESS
+    assert "https://arxiv.org/html/2310.08864" not in downloader.calls
+
+
+def test_the_arxiv_search_is_skipped_when_openalex_already_pointed_at_arxiv():
+    """OA 位置本來就是 arxiv.org 時，上面的迴圈已經要過同一組網址，再查一次是白花額度。"""
+
+    # 用 404 而不是 403：403 會把 run.had_error 設起來，那會讓另一個守衛先攔下來，
+    # 這個測試就分不出是哪一個守衛生效的（實測確認過）。
+    locations = [{"is_oa": True, "pdf_url": "https://arxiv.org/pdf/2501.00001"}]
+    downloader = FakeDownloader({
+        "https://api.openalex.org/works/doi:": openalex_work(locations),
+        "https://arxiv.org/pdf/2501.00001": Download(status=404, error="HTTP 404"),
+    })
+
+    FullTextFetcher(downloader=downloader, cache=None).fetch(
+        ReferenceMetadata(doi="10.1/x", title="A paper with a reasonably long title"))
+
+    assert ARXIV_API not in downloader.calls
+
+
+def test_the_arxiv_search_is_skipped_after_an_earlier_failure():
+    """OpenAlex 被限流時連「它認不認得這個篇名」都不知道，這時查 arXiv 的結果不可信，
+    而且會把一次限流放大成每一筆 ref 都多打一次 arXiv。"""
+
+    downloader = FakeDownloader({
+        "https://api.openalex.org/works/doi:": Download(status=429, error="HTTP 429"),
+    })
+
+    result = FullTextFetcher(downloader=downloader, cache=None).fetch(
+        ReferenceMetadata(doi="10.1/x", title="A paper with a reasonably long title"))
+
+    assert ARXIV_API not in downloader.calls
+    assert result.status is FullTextStatus.FETCH_FAILED
+
+
+def test_a_matching_candidate_without_locations_does_not_hide_the_next_one():
+    """同一篇常有「預印本紀錄」和「期刊紀錄」兩筆。先命中的那筆沒有 OA 位置時，
+    原本會直接回報沒有開放存取全文，把真的拿得到的那筆蓋掉。"""
+
+    import json as _json
+
+    title = "A paper indexed twice in the database"
+    payload = {"results": [
+        {"id": "https://openalex.org/W1", "display_name": title, "locations": []},
+        {"id": "https://openalex.org/W2", "display_name": title,
+         "locations": [{"is_oa": True, "landing_page_url": "https://example.org/paper"}]},
+    ]}
+    downloader = FakeDownloader({
+        "https://api.openalex.org/works": Download(
+            status=200, content_type="application/json",
+            body=_json.dumps(payload).encode("utf-8")),
+        "https://example.org/paper": page(ARXIV_BODY),
+    })
+
+    result = FullTextFetcher(downloader=downloader, cache=None).fetch(
+        ReferenceMetadata(title=title))
+
+    assert result.status is FullTextStatus.GOT_FULL_TEXT
+    assert result.source == "oa_html"
