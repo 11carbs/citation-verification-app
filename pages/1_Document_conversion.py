@@ -24,7 +24,8 @@ st.set_page_config(page_title="未獲來源支持引用偵測系統", layout="wi
 st.title("未獲來源支持引用偵測系統")
 st.caption("上傳 PDF 或 DOCX 論文，自動擷取引用並配對文末參考文獻。")
 uploaded = st.file_uploader(
-    "上傳待查核論文（PDF／DOCX，30 MiB 以下）", type=list(SUPPORTED_EXTENSIONS)
+    "上傳待查核論文（PDF／DOCX，30 MB 以下）",
+    type=list(SUPPORTED_EXTENSIONS), max_upload_size=30,
 )
 filename = uploaded.name if uploaded is not None else ""
 data = uploaded.getvalue() if uploaded is not None else None
