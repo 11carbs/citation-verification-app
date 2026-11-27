@@ -135,3 +135,21 @@ def extract_reference_metadata(ref_raw: str) -> ReferenceMetadata:
         first_author=first_author,
         publication_year=publication_year,
     )
+
+
+def reference_cache_key(meta: ReferenceMetadata) -> str:
+    """一筆被引文獻的穩定識別鍵。ref 編號不可以當鍵：不同論文的 [1] 是不同文獻。"""
+
+    if meta.arxiv_id:
+        return f"arxiv:{meta.arxiv_id.casefold()}"
+    if meta.doi:
+        return f"doi:{meta.doi.casefold()}"
+    if meta.title:
+        # 只有篇名時要併上第一作者與年份，否則同名不同篇（preprint 與期刊版、
+        # 不同年的同名報告）會共用快取，讀到別篇的全文
+        return "title:" + "|".join((
+            " ".join(meta.title.casefold().split()),
+            " ".join(meta.first_author.casefold().split()),
+            str(meta.publication_year or ""),
+        ))
+    return ""

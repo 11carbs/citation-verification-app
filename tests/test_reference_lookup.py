@@ -774,7 +774,7 @@ def test_arxiv_only_reference_is_still_queryable() -> None:
 
 
 def test_openalex_runs_without_a_key() -> None:
-    """沒有金鑰也要查 OpenAlex，只是會受每日 100 credits 限制。"""
+    """沒有金鑰也要查 OpenAlex，只是速率與每日預算都比免費金鑰低很多。"""
 
     http = FakeHttp({ISIK: (200, {"results": [{"display_name": ISIK,
                                                "abstract_inverted_index": {"No": [0], "key": [1]}}]}, "")})
