@@ -62,15 +62,23 @@ class MockJevAdapter:
             )
         if lookup_abstract is not None:
             reference = lookup_abstract()
+        if not reference.abstract.strip():
+            # 跟真 adapter 同一條規則（汪老師 11/10 第 4 點）。mock 是展示模式，
+            # 規則只寫在真 adapter 裡的話，示範畫面會演出系統不會做的事。
+            return JevJudgmentResult(
+                title_choice=choice,
+                title_probabilities=probabilities,
+                confidence=max(probabilities.values()),
+                evidence_basis=EvidenceBasis.UNAVAILABLE,
+                status=JudgmentStatus.UNVERIFIABLE,
+            )
         return JevJudgmentResult(
             title_choice=choice,
             title_probabilities=probabilities,
             confidence=max(probabilities.values()),
             support_score=score,
             status=JudgmentStatus.MOCK,
-            evidence_basis=(
-                EvidenceBasis.ABSTRACT if reference.abstract else EvidenceBasis.TITLE
-            ),
+            evidence_basis=EvidenceBasis.ABSTRACT,
         )
 
 
