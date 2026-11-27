@@ -26,6 +26,31 @@ The method uses two sources [1], [3]-[4]. Uncited background is ignored.
     assert "Uncited background" not in result.pairs[0].claim_text
 
 
+def test_section_heading_inside_pdf_text_block_is_not_part_of_cited_claim():
+    blocks = (
+        DocumentBlock("body", "Background\nThe literature has grown [1].\nResults\nA second finding [1].",
+                      "page:1/block:1", 1, (72, 80, 400, 180)),
+        DocumentBlock("heading", "References", "page:2/block:1", 2, (72, 80, 200, 90)),
+        DocumentBlock("ref", "[1] A. Author, Source.", "page:2/block:2", 2,
+                      (72, 105, 400, 120)),
+    )
+    document = ConvertedDocument("doc_test", "study.pdf", "pdf", "", blocks, (), "test")
+    pairs = extract_whole_paper(document).pairs
+    assert [pair.claim_text for pair in pairs] == [
+        "The literature has grown [1].", "A second finding [1].",
+    ]
+    assert [pair.source_locations[0].line_start for pair in pairs] == [2, 4]
+
+
+def test_inline_abstract_label_and_docx_heading_are_excluded_from_claim():
+    paper = ("# Methods\n\nBackground: The first claim [1].\n\n"
+             "## Discussion\n\nA second claim [1].\n\nReferences\n[1] Source.")
+    pairs = extract_whole_paper(convert_pasted_paper(paper)).pairs
+    assert [pair.claim_text for pair in pairs] == [
+        "The first claim [1].", "A second claim [1].",
+    ]
+
+
 def test_parenthetical_and_narrative_author_year():
     paper = """Study
 

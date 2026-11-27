@@ -125,6 +125,19 @@ _NUMERIC_LIKE = re.compile(
     r"(?:\s*[,;]\s*\d+(?:\s*[-–—]\s*\d+)?)*\s*\]"
     r"(?:\s*[-–—]\s*\[\s*\d+\s*\])?"
 )
+_SECTION_NAME = (
+    r"Abstract|Summary|Background|Introduction|Related Work|Literature Review|"
+    r"Methods?|Materials and Methods|Methodology|Results?|Results and Discussion|"
+    r"Discussion|Conclusions?|Evaluation|Limitations|Future Work|"
+    r"摘要|背景|前言|引言|相關研究|文獻探討|研究方法|方法|結果|討論|結論|限制"
+)
+_SECTION_HEADING = re.compile(
+    rf"^(?:#{{1,6}}\s*)?(?:\d+(?:\.\d+)*[.)]?\s+)?(?:{_SECTION_NAME})\s*[:：]?\s*$",
+    re.I,
+)
+_INLINE_SECTION_LABEL = re.compile(
+    rf"^(?:{_SECTION_NAME})\s*[:：]\s+(?=\S)", re.I,
+)
 
 
 def _lines(document: ConvertedDocument) -> list[_Line]:
@@ -151,8 +164,10 @@ def _locations(lines: list[_Line]) -> tuple[SourceLocation, ...]:
 def _paragraphs(lines: list[_Line]) -> list[_Paragraph]:
     paragraphs: list[_Paragraph] = []
     current: list[_Line] = []
-    for line in [*lines, _Line("", "", "", 0, None, None)]:
-        if not line.text.strip() or (current and line.block_id != current[-1].block_id):
+    for original in [*lines, _Line("", "", "", 0, None, None)]:
+        heading = bool(_SECTION_HEADING.fullmatch(original.text.strip()))
+        if (not original.text.strip() or heading
+                or (current and original.block_id != current[-1].block_id)):
             if current:
                 paragraphs.append(_Paragraph(
                     " ".join(" ".join(item.text.strip() for item in current).split()),
@@ -160,7 +175,13 @@ def _paragraphs(lines: list[_Line]) -> list[_Paragraph]:
                     tuple(current),
                 ))
                 current = []
-        if line.text.strip():
+        if original.text.strip() and not heading:
+            line = original
+            if not current:
+                cleaned = _INLINE_SECTION_LABEL.sub("", line.text.strip())
+                if cleaned != line.text.strip():
+                    line = _Line(cleaned, line.block_id, line.locator, line.line_number,
+                                 line.page, line.bbox)
             current.append(line)
     return paragraphs
 

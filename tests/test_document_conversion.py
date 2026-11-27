@@ -48,6 +48,22 @@ def test_docx_order_and_table():
     assert "| Evidence |" in result.markdown
 
 
+def test_docx_section_heading_is_not_joined_to_claim():
+    from docx import Document
+
+    paper = Document()
+    paper.add_heading("Background", 1)
+    paper.add_paragraph("The literature has grown [1].")
+    paper.add_heading("References", 1)
+    paper.add_paragraph("[1] A. Author, Source.")
+    stream = BytesIO()
+    paper.save(stream)
+
+    outcome = extract_whole_paper(convert_document(stream.getvalue(), "paper.docx"))
+    assert [pair.claim_text for pair in outcome.pairs] == ["The literature has grown [1]."]
+    assert outcome.pairs[0].match_status == "matched"
+
+
 def test_docx_superscript_and_note_parts_keep_markers_and_locations():
     from docx import Document
     from docx.oxml import OxmlElement
