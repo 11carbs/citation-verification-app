@@ -119,6 +119,23 @@ class FullTextResult:
         return self.status is FullTextStatus.GOT_FULL_TEXT and bool(self.markdown.strip())
 
 
+@dataclass(frozen=True, slots=True)
+class ManualUpload:
+    """使用者手動提供的被引文獻檔案（分工：手動上傳備援）。
+
+    只帶檔名與位元組，不碰磁碟：瀏覽器上傳的檔案本來就沒有路徑，寫成暫存檔
+    只會多一層會失敗、要清理的東西。``name`` 用來判副檔名，``label`` 是表格
+    「摘要來源網址」欄要顯示的字串，留空就用 ``name``。
+    """
+
+    name: str
+    data: bytes
+    label: str = ""
+
+    def fetch_with(self, fetcher: FullTextFetcher) -> FullTextResult:
+        return fetcher.fetch_upload(self.name, self.data, label=self.label or self.name)
+
+
 # --------------------------------------------------------------------------
 # 下載層
 # --------------------------------------------------------------------------
@@ -542,7 +559,11 @@ class FullTextFetcher:
         return result
 
     def fetch_file(self, path: Path | str) -> FullTextResult:
-        """手動上傳的被引文獻走同一條轉檔路（分工：手動上傳備援）。"""
+        """手動上傳的被引文獻走同一條轉檔路（分工：手動上傳備援）。
+
+        檔案已經在磁碟上時用這個。瀏覽器上傳的檔案只有位元組、沒有路徑，
+        用 :meth:`fetch_upload`，兩者走的是同一段轉檔程式。
+        """
 
         path = Path(path)
         try:
@@ -551,23 +572,47 @@ class FullTextFetcher:
             return FullTextResult(status=FullTextStatus.FETCH_FAILED,
                                   source="manual_upload", url=str(path),
                                   note=f"讀不到檔案：{type(exc).__name__}")
-        suffix = path.suffix.casefold()
+        return self.fetch_upload(path.name, data, label=str(path))
+
+    def fetch_upload(self, name: str, data: bytes, *, label: str = "",
+                     min_chars: int = MIN_FULL_TEXT_CHARS) -> FullTextResult:
+        """同 :meth:`fetch_file`，但直接吃位元組，給瀏覽器上傳用。
+
+        ``name`` 只用來看副檔名，``label`` 是要寫進 ``url`` 欄的識別字串
+        （留空就用 ``name``）。表格看到的 ``source`` 一律是 ``manual_upload``。
+
+        **長度門檻手動上傳也要套**（2026-11-28 改，原本是 ``min_chars=0``）。
+        使用者很容易把出版社的付費牆頁面存成 HTML 上傳，那種頁面轉出來只有幾十字
+        的「請購買後閱讀」。放行的話證據欄會寫「拿到全文」，判斷端拿到的是垃圾，
+        於是給出一個有自信的「不支持」——那是假的，而且會永久壓掉自動那條路本來
+        抓得到的真全文。自動路徑一直有這道門檻，手動路徑沒有道理豁免。
+        擋下來時回 ``TOO_SHORT``，取證層會照常往自動那條路走，原因留在 note 裡。
+        真的要放行短檔案（例如使用者自己抄下來的一段）就明寫 ``min_chars=0``。
+        """
+
+        label = label or name
+        suffix = Path(name).suffix.casefold()
+        text_like = (".md", ".markdown", ".txt", ".xml", ".nxml", ".jats", ".html", ".htm")
+        if suffix in text_like:
+            text, problem = _decode_upload(data)
+            if problem:
+                return FullTextResult(status=FullTextStatus.CONVERT_FAILED,
+                                      source="manual_upload", url=label, note=problem)
         if suffix in (".md", ".markdown", ".txt"):
-            text = data.decode("utf-8", errors="replace").strip()
-            return _converted(text, "manual_upload", str(path), "passthrough",
-                              "手動上傳，原檔已是純文字", min_chars=0)
+            return _converted(text.strip(), "manual_upload", label, "passthrough",
+                              "手動上傳，原檔已是純文字", min_chars=min_chars)
         if suffix in (".xml", ".nxml", ".jats"):
-            return _converted(jats_to_markdown(data.decode("utf-8", errors="replace")),
-                              "manual_upload", str(path), "jats", "手動上傳 JATS XML", min_chars=0)
+            return _converted(jats_to_markdown(text), "manual_upload", label, "jats",
+                              "手動上傳 JATS XML", min_chars=min_chars)
         if suffix in (".html", ".htm"):
-            markdown, converter = html_to_markdown(data.decode("utf-8", errors="replace"))
-            return _converted(markdown, "manual_upload", str(path), converter, "手動上傳 HTML",
-                              min_chars=0)
+            markdown, converter = html_to_markdown(text)
+            return _converted(markdown, "manual_upload", label, converter, "手動上傳 HTML",
+                              min_chars=min_chars)
         if suffix == ".pdf":
             run = _Run()
-            return _with_note(self._from_pdf(data, "manual_upload", str(path), run), run)
+            return _with_note(self._from_pdf(data, "manual_upload", label, run), run)
         return FullTextResult(status=FullTextStatus.CONVERT_FAILED,
-                              source="manual_upload", url=str(path),
+                              source="manual_upload", url=label,
                               note=f"不支援的副檔名「{suffix or '（無）'}」")
 
     # ---- 分流 ----
@@ -950,6 +995,35 @@ def _first_pmcid(locations: list[dict]) -> str:
 
 def _clean_url(value: object) -> str:
     return value.strip() if isinstance(value, str) and value.strip().startswith("http") else ""
+
+
+def _decode_upload(data: bytes) -> tuple[str, str]:
+    """把上傳的位元組解成文字。回傳 ``(文字, 失敗原因)``，成功時原因是空字串。
+
+    一定要先認 BOM：Windows 的「另存為文字檔」預設是 UTF-16，直接用 UTF-8 讀會得到
+    一堆 NUL 夾雜替代字元的亂碼。那串亂碼字數很多，過得了長度門檻，於是被標成
+    「拿到全文」送進判斷——判斷端看不懂，給出來的低分是假的。
+
+    解不出來就當**轉檔失敗**，不是「拿到一份很爛的全文」：這兩件事在評估時必須分開。
+    """
+
+    for encoding in ("utf-8-sig", "utf-16", "utf-32"):
+        if encoding != "utf-8-sig" and not data[:4].startswith(
+                (b"\xff\xfe", b"\xfe\xff", b"\x00\x00\xfe\xff")):
+            continue
+        try:
+            text = data.decode(encoding)
+        except (UnicodeDecodeError, LookupError):
+            continue
+        if "\x00" not in text:
+            return text, ""
+    text = data.decode("utf-8", errors="replace")
+    if "\x00" in text:
+        return "", "檔案裡有 NUL 位元組，看起來不是文字檔（可能是二進位檔改了副檔名）"
+    broken = text.count("\ufffd")
+    if broken and broken > len(text) * 0.02:
+        return "", f"有 {broken} 個字解不出來（約 {broken / len(text):.0%}），編碼可能不是 UTF-8"
+    return text, ""
 
 
 def _converted(markdown: str, source: str, url: str, converter: str, note: str,
