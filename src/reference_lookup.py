@@ -195,6 +195,16 @@ class ScholarRequestSchedule:
 
 SCHOLAR_REQUEST_SCHEDULE = ScholarRequestSchedule()
 _ARXIV_SCHEDULE = ScholarRequestSchedule()
+# Crossref 的公開池（沒帶 mailto）對「Filters and queries」是每秒 1 次、並行 1，
+# DOI 直查是每秒 5 次。query.bibliographic 屬於前者，所以取嚴的每秒 1 次。
+# 超過回 429，被封鎖回 403。
+# 來源：https://www.crossref.org/documentation/retrieve-metadata/rest-api/access-and-authentication/
+# （頁面標示 Last updated 2025-10-16，2026-11-27 查）
+# 帶 mailto 可進禮貌池（查詢 3/s、並行 3），但那要送出使用者的 email，
+# 由使用者自己決定，不預設開啟。
+_CROSSREF_HOST = urlsplit(CROSSREF_BASE).netloc
+_CROSSREF_SCHEDULE = ScholarRequestSchedule()
+CROSSREF_MIN_INTERVAL = 1.05
 
 
 class RequestsClient:
@@ -234,7 +244,12 @@ class RequestsClient:
 
     def get(self, url: str, params: dict | None = None, headers: dict | None = None) -> HttpResult:
         host = urlsplit(url).netloc
-        schedule = self._scholar_schedule if host == _S2_HOST else _ARXIV_SCHEDULE if host == "arxiv.org" else None
+        schedule = (
+            self._scholar_schedule if host == _S2_HOST
+            else _ARXIV_SCHEDULE if host == "arxiv.org"
+            else _CROSSREF_SCHEDULE if host == _CROSSREF_HOST
+            else None
+        )
         if schedule is not None:
             with schedule.lock:
                 return self._request(url, host, params, headers, schedule)
@@ -261,7 +276,12 @@ class RequestsClient:
             last_call = self._last_call
             if schedule is not None:
                 last_call = max(last_call, schedule.last_call)
-            interval = max(self.min_interval, 3.1) if host == "arxiv.org" else self.min_interval
+            if host == "arxiv.org":
+                interval = max(self.min_interval, 3.1)
+            elif host == _CROSSREF_HOST:
+                interval = max(self.min_interval, CROSSREF_MIN_INTERVAL)
+            else:
+                interval = self.min_interval
             wait = interval - (time.monotonic() - last_call)
             if wait > 0:
                 time.sleep(wait)

@@ -1,4 +1,4 @@
-# 取全文與轉 Markdown 的選用相依（第二人；汪老師 11/24 第 2 點）
+# 取全文與轉 Markdown 的選用相依（第二人）
 # 這兩個不放進 requirements.txt，沒裝也不會讓程式壞掉：
 #   沒有 trafilatura 會改用內建的簡化 HTML 解析（品質較差，會混進網頁橫幅文字）
 #   沒有 docling 則 PDF 一律回報 NO_CONVERTER（缺轉檔工具，不是文獻沒有全文）

@@ -28,7 +28,7 @@ class JudgmentStatus(StrEnum):
     BATCH_STOPPED = "API 暫停"
     # 目前程式沒有任何地方產生這個值（2026-11-27 查過）。它與下面的 UNVERIFIABLE
     # 語意相近，差別是：這個指「這次查詢失敗、之後重跑可能有」，
-    # UNVERIFIABLE 指「這一輪沒有任何內容證據，依老師 11/10 第 4 點不給分數」。
+    # UNVERIFIABLE 指「這一輪沒有任何內容證據，不給分數」。
     # 要用請先確認是哪一種，不要隨手挑一個。
     EVIDENCE_UNAVAILABLE = "查詢失敗，暫不評分"
     TITLE_AFTER_LOOKUP_FAILURE = "摘要查詢失敗，依篇名評分"

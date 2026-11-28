@@ -35,11 +35,21 @@ TITLE = ReferenceLookupResult(1, "A study of treatment time")
 def title_only_adapter() -> OpenRouterJevAdapter:
     """11/17 的舊規則：拿不到摘要時改用篇名評分。
 
-    汪老師 11/10 會後補充第 4 點把它改成「標無法查核、不給分數」，所以程式預設已經
+    後來改成「標無法查核、不給分數」，所以程式預設已經
     不這樣做。下面這些測試守的是**舊規則本身**（分數裁切、Q1 失敗後續跑、限流不外洩
     回應內容等），拿掉它們等於少掉這些保護，所以保留測試、明確開旗標。
     """
     return OpenRouterJevAdapter("test-placeholder", title_only_scoring=True)
+
+
+def unverifiable_adapter() -> OpenRouterJevAdapter:
+    """拿不到內容證據就標「無法查核」、不給分數。
+
+    2026-11-27 組內採用陳祖旭的做法（改用篇名評分），所以程式預設不再這樣做。
+    原本的要求仍是可選設定，下面這些測試守的就是那一邊；哪天要改回來，
+    這些保護還在。
+    """
+    return OpenRouterJevAdapter("test-placeholder", title_only_scoring=False)
 
 
 def title_answer(choice: str) -> dict:
@@ -231,9 +241,14 @@ def test_abstract_lookup_runs_between_q1_and_q2(
         prepare_reference=lambda pair: TITLE,
     )
     assert stub.events == ["title_relevance", "lookup", "citation_support"]
-    assert stub.states[1] == {
+    expected_state = {
         "claim": PAIR.claim_text, "evidence_type": evidence, "evidence": abstract or TITLE.title,
     }
+    if abstract:
+        # 有內容證據時篇名一併送出，供模型確認「這份摘要是哪一篇的」。
+        # 指示詞明寫它不可當作證據。
+        expected_state["verified_source_title"] = TITLE.title
+    assert stub.states[1] == expected_state
     assert row.judgment.raw_support_score == 0.699
     assert row.judgment.status is (
         JudgmentStatus.TITLE_AFTER_LOOKUP_FAILURE if source_status is SourceStatus.LOOKUP_FAILED
@@ -251,7 +266,7 @@ def test_abstract_lookup_runs_between_q1_and_q2(
     assert record["摘要查詢紀錄"] == "資料庫摘要查詢紀錄"
     csv_data = dataframe_to_csv_bytes(build_output_dataframe([row]))
     [exported] = csv.DictReader(StringIO(csv_data.decode("utf-8-sig")))
-    assert json.loads(exported["方法 A 查核紀錄"]) == {
+    expected_record = {
         "abstract_source": "semantic_scholar" if abstract else "",
         "abstract_url": "",
         "evidence": stub.states[1]["evidence"],
@@ -259,6 +274,10 @@ def test_abstract_lookup_runs_between_q1_and_q2(
         "request_id": "call-2",
         "raw_score": 0.699,
     }
+    if abstract:
+        # 查核紀錄要留下送出去的篇名，之後才查得出「當時模型看到的是哪一篇」
+        expected_record["verified_source_title"] = TITLE.title
+    assert json.loads(exported["方法 A 查核紀錄"]) == expected_record
 
 
 @pytest.mark.parametrize(
@@ -438,8 +457,10 @@ def test_missing_key_preserves_pairing_and_uses_no_network(monkeypatch):
          ["title_relevance", "semantic_scholar", "citation_support", "evidence_excerpt"]),
         ("uncertain", "openalex", "拿到摘要", "摘要", "不確定",
          ["title_relevance", "semantic_scholar", "openalex", "citation_support", "evidence_excerpt"]),
-        ("uncertain", "", "查不到", "無可用證據", "無法查核",
-         ["title_relevance", "semantic_scholar", "openalex"]),
+        # 全文與摘要都拿不到 → 用篇名評分（陳祖旭 2026-11-27 的做法）。
+        # 「判斷依據＝篇名」就是評估時要篩掉這些列的依據。
+        ("uncertain", "", "查不到", "篇名", "不確定",
+         ["title_relevance", "semantic_scholar", "openalex", "citation_support"]),
         ("unrelated", "", "Q1 停止未查詢", "篇名", "不支持", ["title_relevance"]),
     ],
 )
@@ -536,7 +557,7 @@ def test_streamlit_connects_jev_to_real_lookup_adapter_with_stubbed_http(
     assert "使用 Jev" in app.info[0].value
 
 
-# --- 汪老師 11/10 會後補充第 4 點：拿不到內容證據就標「無法查核」、不給分數 ---
+# --- 拿不到內容證據就標「無法查核」、不給分數 ---
 # 系統沒有人工補查，所以這裡的責任是**誠實回報查不到**，不是猜一個分數。
 # 下面每一條都在守「無法查核不可以被混成別的東西」。
 
@@ -560,7 +581,7 @@ def test_no_abstract_is_unverifiable_and_keeps_its_own_reason(
     )
 
     [row] = run_method_a_pipeline(
-        [PAIR], reference_adapter, OpenRouterJevAdapter("test-placeholder"),
+        [PAIR], reference_adapter, unverifiable_adapter(),
     )
 
     assert stub.events == ["title_relevance"], "沒有證據就不該再花一次 Q2 的錢"
@@ -584,8 +605,8 @@ def test_unverifiable_is_not_the_same_as_unsupported(monkeypatch):
         1, TITLE.title, source_status=SourceStatus.NOT_FOUND,
     )
 
-    [unrelated] = run_method_a_pipeline([PAIR], reference_adapter, OpenRouterJevAdapter("test-placeholder"))
-    [no_evidence] = run_method_a_pipeline([PAIR], reference_adapter, OpenRouterJevAdapter("test-placeholder"))
+    [unrelated] = run_method_a_pipeline([PAIR], reference_adapter, unverifiable_adapter())
+    [no_evidence] = run_method_a_pipeline([PAIR], reference_adapter, unverifiable_adapter())
 
     assert unrelated.method_a.support_score is no_evidence.method_a.support_score is None
     assert unrelated.method_a.band is SupportBand.UNSUPPORTED
@@ -639,7 +660,7 @@ def test_unverifiable_does_not_count_as_still_pending(monkeypatch):
 
     rows = run_method_a_pipeline(
         build_citation_pairs(source_sentence, refs), reference_adapter,
-        OpenRouterJevAdapter("test-placeholder"),
+        unverifiable_adapter(),
     )
 
     assert all(row.method_a.band is SupportBand.UNVERIFIABLE for row in rows)
@@ -688,7 +709,7 @@ def test_a_group_with_one_unreachable_source_is_not_reported_as_finished(monkeyp
         '[1] A. Author, "BERT," 2019.\n[2] A. Author, "SciBERT," 2019.',
     )
 
-    rows = run_method_a_pipeline(pairs, reference_adapter, OpenRouterJevAdapter("test-placeholder"))
+    rows = run_method_a_pipeline(pairs, reference_adapter, unverifiable_adapter())
 
     assert [row.method_a.band for row in rows] == [
         SupportBand.SUPPORTED, SupportBand.UNSUPPORTED,
@@ -707,7 +728,7 @@ def test_running_without_a_lookup_adapter_says_why_there_is_no_evidence(monkeypa
     """沒接摘要查詢時，不可以留下「無法查核＋來源狀態待查詢＋原因全空」。"""
     DecisionsStub(monkeypatch, title_answer("related"))
 
-    [row] = run_method_a_pipeline([PAIR], None, OpenRouterJevAdapter("test-placeholder"))
+    [row] = run_method_a_pipeline([PAIR], None, unverifiable_adapter())
 
     record = row.to_record()
     assert record["方法 A 證據層級"] == "無法查核"
@@ -742,7 +763,7 @@ def test_the_demo_table_marks_the_two_missing_references_unverifiable(monkeypatc
     pairs = build_citation_pairs(MOCK_CLAIM, MOCK_REFERENCES)
 
     rows = run_method_a_pipeline(
-        pairs, reference_adapter, OpenRouterJevAdapter("test-placeholder"),
+        pairs, reference_adapter, unverifiable_adapter(),
     )
 
     assert [row.method_a.band for row in rows] == [
@@ -767,3 +788,25 @@ def test_mock_mode_follows_the_same_rule(monkeypatch):
 
     assert judgment.support_score is None
     assert judgment.status is JudgmentStatus.UNVERIFIABLE
+
+
+@pytest.mark.parametrize("status", [SourceStatus.LOOKUP_FAILED, SourceStatus.NOT_FOUND])
+def test_an_abstract_from_a_failed_lookup_is_not_used_as_evidence(monkeypatch, status):
+    """查詢失敗或查不到時，回傳物件上殘留的摘要不可以拿來評分。
+
+    那份文字沒有經過「這確實是這一篇」的確認，拿去比對會產生假的判斷結果。
+    （2026-11-27 突變測試兩度發現這條守衛沒有保護，補上。）
+    """
+    stub = DecisionsStub(monkeypatch, title_answer("related"), {"type": "noul", "noul": 0.95})
+    reference_adapter = Mock()
+    reference_adapter.lookup.side_effect = lambda pair: ReferenceLookupResult(
+        1, TITLE.title, abstract="殘留的、未經確認的摘要文字。", source_status=status,
+    )
+
+    [row] = run_method_a_pipeline(
+        [PAIR], reference_adapter, unverifiable_adapter(),
+    )
+
+    assert stub.events == ["title_relevance"], "查詢失敗就不該拿殘留摘要去送 Q2"
+    assert row.method_a.band is SupportBand.UNVERIFIABLE
+    assert row.method_a.support_score is None

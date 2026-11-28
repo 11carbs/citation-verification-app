@@ -89,17 +89,24 @@ class OpenRouterJevAdapter:
         model: str = DEFAULT_MODEL,
         timeout: float = 20.0,
         include_evidence_excerpt: bool = False,
-        resolve_abstract_title: bool = False,
-        title_only_scoring: bool = False,
+        resolve_abstract_title: bool = True,
+        title_only_scoring: bool = True,
     ) -> None:
         self._api_key = api_key.strip()
         self._model = model
         self._timeout = timeout
         self._include_evidence_excerpt = include_evidence_excerpt
+        # 有內容證據時，篇名一併送進 Q2（第三人 2026-11-27 建議；app.py 本來就開著，
+        # 2026-11-27 改成預設）。指示詞明寫篇名**只能用來確認是哪一篇，不可當作證據**，
+        # 否則等於把「看篇名猜」偷渡回判斷裡。
         self._resolve_abstract_title = resolve_abstract_title
-        # 11/17 的舊做法：拿不到摘要就用篇名評分。汪老師 11/10 會後補充第 4 點否決了它
-        # （系統沒有人工補查，只記錄該項目無法查核），所以預設關閉。
-        # 要還原舊行為，建 adapter 時傳 title_only_scoring=True。
+        # 全文與摘要都拿不到時，用篇名評分並標「判斷依據＝篇名」
+        # （陳祖旭 2026-11-27 的做法，LJH 2026-11-27 採用）。
+        #
+        # ⚠️ 這與「系統沒有人工補查，只記錄該項目無法查核」這條規則不一致，是組內的決定，報告時要說明。評估時務必用
+        # 「方法 A 判斷依據＝篇名」把這些列篩掉再算混淆矩陣，否則「不支持」裡
+        # 會混進系統自己抓不到的文獻。
+        # 傳 title_only_scoring=False 就回到原本的做法（標無法查核、不給分數）。
         self._title_only_scoring = title_only_scoring
         if not self._api_key:
             raise ValueError("缺少 OpenRouter API Key。")
@@ -110,7 +117,15 @@ class OpenRouterJevAdapter:
         reference: ReferenceLookupResult,
         *,
         lookup_abstract: Callable[[], ReferenceLookupResult] | None = None,
+        evidence_text: str = "",
+        evidence_basis: EvidenceBasis | None = None,
     ) -> JevJudgmentResult:
+        """``evidence_basis`` 有值時，adapter 不再自己去查，直接用給進來的證據評分。
+
+        現行架構第 5 點：同一批引用、**同一份證據**，分兩條路判斷。取證由第二人的
+        ``EvidenceResolver`` 做完，adapter 只負責判定。沒有傳就走原本的
+        ``lookup_abstract`` 路徑，既有呼叫端不受影響。
+        """
         title = reference.title.strip()
         if not title:
             return JevJudgmentResult(
@@ -134,14 +149,22 @@ class OpenRouterJevAdapter:
         if judgment.title_choice is TitleRelevance.UNRELATED:
             return replace(judgment, status=JudgmentStatus.STOPPED)
 
-        if lookup_abstract is not None:
-            reference = lookup_abstract()
-        lookup_failed = reference.source_status is SourceStatus.LOOKUP_FAILED
-        abstract = reference.abstract.strip()
-        if lookup_failed or reference.source_status is SourceStatus.NOT_FOUND:
-            abstract = ""
+        if evidence_basis is not None:
+            # 證據已經由呼叫端備好，不再查一次。能不能評分只看有沒有文字，
+            # 不看 source_status：全文那條路的狀態不在 ReferenceLookupResult 裡。
+            lookup_failed = False
+            abstract = evidence_text.strip()
+            supplied_basis: EvidenceBasis | None = evidence_basis if abstract else None
+        else:
+            if lookup_abstract is not None:
+                reference = lookup_abstract()
+            lookup_failed = reference.source_status is SourceStatus.LOOKUP_FAILED
+            abstract = reference.abstract.strip()
+            if lookup_failed or reference.source_status is SourceStatus.NOT_FOUND:
+                abstract = ""
+            supplied_basis = None
         if not abstract and not self._title_only_scoring:
-            # 沒有內容證據就不送 Q2，也不給分數（汪老師 11/10 第 4 點）。
+            # 沒有內容證據就不送 Q2，也不給分數。
             # 為什麼拿不到（查不到文獻／有文獻但沒摘要／查詢失敗）不在這裡收斂，
             # 由 reference.source_status 與 error_message 各自保留，不可混成一句。
             return replace(
@@ -149,7 +172,9 @@ class OpenRouterJevAdapter:
                 evidence_basis=EvidenceBasis.UNAVAILABLE,
                 status=JudgmentStatus.UNVERIFIABLE,
             )
-        evidence_basis = EvidenceBasis.ABSTRACT if abstract else EvidenceBasis.TITLE
+        evidence_basis = supplied_basis or (
+            EvidenceBasis.ABSTRACT if abstract else EvidenceBasis.TITLE
+        )
         state = {
             "claim": pair.claim_text,
             "evidence_type": evidence_basis.value,
