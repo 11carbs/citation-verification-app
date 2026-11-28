@@ -515,6 +515,10 @@ def test_streamlit_connects_jev_to_real_lookup_adapter_with_stubbed_http(
     app.text_area[0].set_value(PAIR.claim_text)
     app.text_area[1].set_value(PAIR.ref_raw)
     app.toggle[0].set_value(False)
+    # 這個案例守的是**只查摘要**那條舊路徑（Q1 → 摘要 → Q2 的呼叫順序）。
+    # app.py 2026-11-28 起預設改走取證層（全文優先），所以這裡明確關掉開關；
+    # 要讓這些案例跑新路徑，把下面這行刪掉即可。
+    app.toggle(key="use_evidence_layer").set_value(False)
     app.button[1].click().run()
     assert not app.exception
     assert stub.events == sequence
