@@ -460,3 +460,17 @@ def test_a_subsection_heading_does_not_hide_the_main_section():
     result = find_evidence("mean relevance score across quartiles [1].", source, top_k=1)
 
     assert result.passages[0].section == "Results"
+
+
+def test_a_nul_byte_in_the_source_does_not_crash_the_whole_batch():
+    """``_split_block`` 用 "\\x00<編號>\\x00" 當內部佔位符。來源文字本身帶 NUL 又接
+    數字時，還原那一步會 IndexError——而它在逐筆迴圈裡，會炸掉整批分析，
+    連其他 ref 本來拿得到的證據也一起沒了。手動上傳是使用者位元組的入口。
+    """
+
+    source = "The method reduces treatment time.\x009\x00 More text here. " * 20
+
+    result = find_evidence("The method reduces treatment time.", source)
+
+    assert result.passages
+    assert all("\x00" not in passage.text for passage in result.passages)

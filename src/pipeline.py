@@ -14,7 +14,7 @@ from src.adapters import (
 )
 from src.evidence_selection import select_evidence
 from src.reference_metadata import extract_reference_metadata
-from src.source_evidence import EvidenceResolver
+from src.source_evidence import EvidenceResolver, SourceEvidence
 from src.schemas import (
     AnalysisRow,
     CitationPair,
@@ -120,15 +120,51 @@ def _judge_with_evidence(
         if evidence.note and not judgment.error_message:
             judgment = replace(judgment, error_message=evidence.note)
         return reference, judgment
-    selected = select_evidence(
-        pair.claim_text, evidence.text, source_label=evidence.basis.value,
-    )
-    judgment = jev_adapter.judge(
-        pair, reference,
-        evidence_text=selected.text_for_judgement(),
-        evidence_basis=evidence.basis,
-    )
+    reference = _with_evidence_provenance(reference, evidence)
+    try:
+        selected = select_evidence(
+            pair.claim_text, evidence.text, source_label=evidence.basis.value,
+        )
+        judgment = jev_adapter.judge(
+            pair, reference,
+            evidence_text=selected.text_for_judgement(),
+            evidence_basis=evidence.basis,
+        )
+    except Exception as error:  # noqa: BLE001
+        # 一筆壞掉不可以炸掉整批。實測過：使用者上傳一個編碼壞掉的檔案，
+        # 切句那一步丟 IndexError，整個 run 沒有任何結果，連其他 ref 本來
+        # 拿得到的證據也一起沒了。這裡記成錯誤，不是記成判斷結果。
+        return reference, JevJudgmentResult(
+            status=JudgmentStatus.SUPPORT_ERROR,
+            error_message=f"判斷這一筆時發生錯誤（{type(error).__name__}）。",
+        )
     return reference, judgment
+
+
+def _with_evidence_provenance(
+    reference: ReferenceLookupResult, evidence: SourceEvidence,
+) -> ReferenceLookupResult:
+    """把證據的來源與取得過程寫進輸出表看得到的欄位。
+
+    不做的話，手動上傳與全文那兩條路在表上完全沒有痕跡：「摘要查詢紀錄」
+    「摘要來源網址」「方法 A 摘要來源」三欄都是空的，評估時分不出哪幾列的證據
+    是使用者給的、哪幾列是系統自己找到的，手動上傳失敗的原因也看不到。
+    這兩件事都是這個專案列出的常犯錯誤。
+
+    ``source_note``（輸出表的「摘要查詢紀錄」）用**接的**，不是只在空的時候補：
+    退摘要那條路上查詢層已經寫了自己的紀錄，只在空的時候補的話，手動上傳為什麼
+    沒能用就永遠寫不進去——而「退摘要」正是最常見的 fallback。
+
+    不碰 ``abstract_source`` 與 ``abstract_url``：那兩欄在共用輸出格式裡指的是
+    摘要的來源，把全文網址或上傳的檔名塞進去會讓欄位含義變掉（「摘要來源網址」
+    還是用 LinkColumn 渲染的，填檔名會變成點不開的死連結）。證據的來源與檔名
+    已經寫在 note 裡。
+    """
+
+    if not evidence.note or evidence.note in reference.source_note:
+        return reference
+    note = "；".join(part for part in (evidence.note, reference.source_note) if part)
+    return replace(reference, source_note=note)
 
 
 def _judge_pair(

@@ -287,3 +287,50 @@ def test_the_old_lookup_path_also_falls_back_to_the_title(monkeypatch):
     assert stub.states[1]["evidence"] == "A study of treatment time"
     assert row.method_a.band is SupportBand.UNCERTAIN
     assert row.to_record()["方法 A 判斷依據"] == "篇名"
+
+
+def test_one_broken_pair_does_not_take_the_whole_batch_down(monkeypatch):
+    """判斷某一筆時壞掉，其他 ref 本來拿得到的結果不可以跟著消失。
+
+    實測過：使用者上傳一個編碼壞掉的檔案，切句那一步丟 IndexError，整個 run
+    沒有任何結果，連另一條 ref 本來拿得到的證據也一起沒了。失敗要記成這一筆的
+    錯誤，不是整批沒有輸出。
+    """
+
+    import src.pipeline as pipeline_module
+
+    stub = Stub(monkeypatch)
+    pairs = [
+        CitationPair("p1", "The method reduces treatment time [1].", "[1]", 1,
+                     '[1] A. Author, "A study of treatment time," J. X, 2026.'),
+        CitationPair("p2", "The method reduces treatment time [2].", "[2]", 2,
+                     '[2] B. Author, "Another study," J. Y, 2026.'),
+    ]
+    resolver = Mock()
+    resolver.resolve.side_effect = [
+        full_text_evidence(ref_number=1),
+        # 巢狀的 reference 也要是第 2 筆，否則 pipeline 會先以「取證層交回別筆 ref」
+        # 擋下來，測到的就不是我們要測的那條路
+        full_text_evidence(ref_number=2,
+                           reference=ReferenceLookupResult(2, "Another study")),
+    ]
+    original = pipeline_module.select_evidence
+
+    def explode(claim, text, **kwargs):
+        if resolver.resolve.call_count == 1:
+            raise IndexError("list index out of range")
+        return original(claim, text, **kwargs)
+
+    monkeypatch.setattr(pipeline_module, "select_evidence", explode)
+
+    rows = run_method_a_pipeline(pairs, None, OpenRouterJevAdapter("test-placeholder"),
+                                 evidence_resolver=resolver)
+
+    assert len(rows) == 2
+    assert rows[0].judgment.status is JudgmentStatus.SUPPORT_ERROR
+    assert "IndexError" in rows[0].judgment.error_message
+    assert rows[0].method_a.support_score is None
+    # 第二筆照常有結果
+    assert rows[1].judgment.status is not JudgmentStatus.SUPPORT_ERROR
+    assert rows[1].method_a.support_score == 0.80
+    assert stub.events, "第二筆還是要真的問到 Jev"

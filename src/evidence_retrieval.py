@@ -178,6 +178,12 @@ def find_evidence(claim: str, source_markdown: str, *, top_k: int = DEFAULT_TOP_
         source_markdown = "" if source_markdown is None else str(source_markdown)
     if not isinstance(claim, str):
         claim = "" if claim is None else str(claim)
+    # NUL 一定要先拿掉。_split_block 用 "\x00<編號>\x00" 當內部佔位符，來源文字本身
+    # 帶 NUL 又接數字時，還原那一步會 IndexError，而且是在逐筆迴圈裡炸掉整批分析。
+    # 手動上傳讓任意使用者位元組走進這條路（例如 UTF-16 存成 .txt），所以不是理論風險。
+    # NUL 在抽出來的文字裡沒有任何意義，刪掉不影響比對。
+    if "\x00" in source_markdown:
+        source_markdown = source_markdown.replace("\x00", "")
     if not source_markdown.strip():
         return RetrievalResult(status=RetrievalStatus.NO_SOURCE_TEXT, source_label=source_label,
                                note="沒有拿到來源文字，無法檢索")

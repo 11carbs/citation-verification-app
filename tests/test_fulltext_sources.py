@@ -325,9 +325,12 @@ def test_cache_does_not_store_failures(tmp_path: Path):
 # ---------------------------------------------------------------- 手動上傳
 
 
+LONG_BODY = "# Paper\n\n" + "The proposed method reduces treatment time. " * 40
+
+
 def test_manual_upload_markdown(tmp_path: Path):
     path = tmp_path / "paper.md"
-    path.write_text("# Title\n\nBody.", encoding="utf-8")
+    path.write_text(LONG_BODY, encoding="utf-8")
 
     result = FullTextFetcher(downloader=FakeDownloader({})).fetch_file(path)
 
@@ -367,11 +370,49 @@ def test_manual_upload_missing_file(tmp_path: Path):
 @pytest.mark.parametrize("suffix", [".md", ".xml"])
 def test_manual_upload_keeps_path_as_url(tmp_path: Path, suffix: str):
     path = tmp_path / f"paper{suffix}"
-    path.write_text(JATS_XML if suffix == ".xml" else "# T\n\nbody", encoding="utf-8")
+    path.write_text(JATS_XML if suffix == ".xml" else LONG_BODY, encoding="utf-8")
 
     result = FullTextFetcher(downloader=FakeDownloader({})).fetch_file(path)
 
     assert result.url == str(path)
+
+
+def test_browser_upload_needs_no_file_on_disk():
+    result = FullTextFetcher(downloader=FakeDownloader({})).fetch_upload(
+        "paper.md", LONG_BODY.encode("utf-8"))
+
+    assert result.status is FullTextStatus.GOT_FULL_TEXT
+    assert result.source == "manual_upload"
+    assert result.converter == "passthrough"
+    assert result.url == "paper.md"
+
+
+def test_browser_upload_and_file_upload_convert_the_same_way(tmp_path: Path):
+    path = tmp_path / "paper.xml"
+    path.write_text(JATS_XML, encoding="utf-8")
+    fetcher = FullTextFetcher(downloader=FakeDownloader({}))
+
+    from_disk = fetcher.fetch_file(path)
+    from_browser = fetcher.fetch_upload("paper.xml", JATS_XML.encode("utf-8"))
+
+    assert from_disk.status is from_browser.status
+    assert from_disk.converter == from_browser.converter
+    assert from_disk.markdown == from_browser.markdown
+
+
+def test_a_browser_upload_can_be_labelled_for_the_results_table():
+    result = FullTextFetcher(downloader=FakeDownloader({})).fetch_upload(
+        "paper.md", LONG_BODY.encode("utf-8"), label="使用者上傳：paper.md")
+
+    assert result.url == "使用者上傳：paper.md"
+
+
+def test_a_browser_upload_with_an_unsupported_suffix_says_which_one():
+    result = FullTextFetcher(downloader=FakeDownloader({})).fetch_upload(
+        "paper.docx", b"PK\x03\x04")
+
+    assert result.status is FullTextStatus.CONVERT_FAILED
+    assert ".docx" in result.note
 
 
 # ---------------------------------------------------------------- 下載層
@@ -817,8 +858,14 @@ def test_a_blocked_page_is_not_accepted_as_full_text():
     assert "短到不像全文" in result.note
 
 
-def test_a_manual_upload_is_not_rejected_for_being_short():
-    """手動上傳是使用者自己給的備援，不套長度門檻。"""
+def test_a_short_manual_upload_is_refused_like_any_other_short_page():
+    """2026-11-28 改：手動上傳也要套長度門檻。
+
+    原本手動路徑 min_chars=0，理由是「使用者自己給的」。實測發現使用者把出版社
+    付費牆頁面存成 HTML 上傳時，那頁轉出來只有幾十字的「請購買後閱讀」，卻被標成
+    「拿到全文」，判斷端據此給出有自信的「不支持」——假的不支持，而且壓掉了自動
+    那條路本來抓得到的真全文。所以改成跟自動路徑同一道門檻。
+    """
 
     import tempfile
     from pathlib import Path as _Path
@@ -828,6 +875,17 @@ def test_a_manual_upload_is_not_rejected_for_being_short():
         path.write_text("# Short note\n\nOnly a couple of lines.", encoding="utf-8")
 
         result = FullTextFetcher(downloader=FakeDownloader({}), cache=None).fetch_file(path)
+
+    assert result.status is FullTextStatus.TOO_SHORT
+    assert result.ok is False
+    assert "短到不像全文" in result.note
+
+
+def test_a_short_upload_can_still_be_let_through_on_purpose():
+    """門檻是參數，不是寫死的：真的要收短檔案就明寫。"""
+
+    result = FullTextFetcher(downloader=FakeDownloader({})).fetch_upload(
+        "note.md", b"# Short note\n\nOnly a couple of lines.", min_chars=0)
 
     assert result.status is FullTextStatus.GOT_FULL_TEXT
 
@@ -1110,3 +1168,74 @@ def test_a_matching_candidate_without_locations_does_not_hide_the_next_one():
 
     assert result.status is FullTextStatus.GOT_FULL_TEXT
     assert result.source == "oa_html"
+
+
+PAYWALL_HTML = (
+    "<html><head><title>A study of treatment time</title></head><body>"
+    "<h1>A study of treatment time</h1>"
+    "<p>To read this article on treatment time and the proposed method, "
+    "please purchase access or sign in through your institution.</p>"
+    "</body></html>"
+).encode("utf-8")
+
+
+def test_an_uploaded_paywall_page_is_not_accepted_as_full_text():
+    """使用者把付費牆頁面存成 HTML 上傳，是手動上傳最常見的失敗型態。
+
+    放行的話會變成「拿到全文」，判斷端據此給出假的「不支持」，而且壓掉自動
+    那條路本來抓得到的真全文。
+    """
+
+    result = FullTextFetcher(downloader=FakeDownloader({})).fetch_upload(
+        "saved_page.html", PAYWALL_HTML)
+
+    assert result.status is FullTextStatus.TOO_SHORT
+    assert result.ok is False
+    assert "短到不像全文" in result.note
+
+
+# ------------------------------------------------ 編碼壞掉的上傳不是「一份爛全文」
+
+
+UPLOAD_BODY = "The method reduces treatment time in the reported trial. " * 40
+
+
+def test_a_utf16_text_file_is_decoded_instead_of_turning_into_nul_soup():
+    """Windows 的「另存為文字檔」預設 UTF-16。用 UTF-8 硬讀會得到 NUL 夾雜替代字元
+    的亂碼，字數很多、過得了長度門檻，於是被標成「拿到全文」送進判斷。"""
+
+    result = FullTextFetcher(downloader=FakeDownloader({})).fetch_upload(
+        "note.txt", UPLOAD_BODY.encode("utf-16"))
+
+    assert result.status is FullTextStatus.GOT_FULL_TEXT
+    assert "\x00" not in result.markdown
+    assert "reduces treatment time" in result.markdown
+
+
+def test_a_binary_file_renamed_to_txt_is_a_conversion_failure_not_full_text():
+    result = FullTextFetcher(downloader=FakeDownloader({})).fetch_upload(
+        "fake.txt", b"%PDF-1.4\x00\x01binary\x00payload" * 200)
+
+    assert result.status is FullTextStatus.CONVERT_FAILED
+    assert result.ok is False
+    assert "NUL" in result.note
+
+
+def test_mostly_undecodable_bytes_are_a_conversion_failure():
+    result = FullTextFetcher(downloader=FakeDownloader({})).fetch_upload(
+        "note.txt", bytes(range(0x80, 0x100)) * 20)
+
+    assert result.status is FullTextStatus.CONVERT_FAILED
+    assert "編碼" in result.note
+
+
+def test_manual_upload_url_is_only_kept_when_the_conversion_succeeded():
+    """原本只斷言 url，但 TOO_SHORT 也會帶 url，所以那條測試已經證明不了轉檔成功。"""
+
+    fetcher = FullTextFetcher(downloader=FakeDownloader({}))
+
+    ok = fetcher.fetch_upload("paper.md", UPLOAD_BODY.encode("utf-8"))
+    short = fetcher.fetch_upload("paper.md", b"# T\n\nbody")
+
+    assert ok.status is FullTextStatus.GOT_FULL_TEXT and ok.url == "paper.md"
+    assert short.status is FullTextStatus.TOO_SHORT and short.url == "paper.md"
